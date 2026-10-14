@@ -1,0 +1,2067 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>スキャンツール</title>
+<meta name="theme-color" content="#1e6b55">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="スキャン">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one-column phone app. Sticky header, content list, fixed action bar at the bottom. Image stage on graph paper. */
+:root{
+  --bg:#eef2f1; --surface:#ffffff; --ink:#17221f; --muted:#5d6b67; --line:#d3dcd9;
+  --accent:#1e6b55; --accent-ink:#ffffff; --chalk:#b07708; --err:#b03a2e; --ok:#2e7d4f;
+  --grid:rgba(30,107,85,.10); --shade:rgba(10,20,17,.45);
+  --font-ui:"Zen Kaku Gothic New",-apple-system,"Hiragino Sans","Yu Gothic UI",sans-serif;
+  --font-math:"Hiragino Mincho ProN","Yu Mincho",serif;
+  --font-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#101715; --surface:#18211e; --ink:#e6eeeb; --muted:#93a39e; --line:#2b3834;
+  --accent:#4fb393; --accent-ink:#08130f; --chalk:#e0b04a; --err:#e0705f; --ok:#5cc08a;
+  --grid:rgba(79,179,147,.10); --shade:rgba(0,0,0,.6); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#101715; --surface:#18211e; --ink:#e6eeeb; --muted:#93a39e; --line:#2b3834;
+  --accent:#4fb393; --accent-ink:#08130f; --chalk:#e0b04a; --err:#e0705f; --ok:#5cc08a;
+  --grid:rgba(79,179,147,.10); --shade:rgba(0,0,0,.6); color-scheme:dark}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-ui);font-size:16px;line-height:1.5}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.app{max-width:720px;margin:0 auto;padding-inline:16px;padding-block:0 120px}
+header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--bg);display:flex;align-items:center;gap:8px;padding-block:12px;margin-inline:-16px;padding-inline:16px;border-bottom:1px solid var(--line)}
+header.top h1{flex:1;min-width:0;margin:0;font-size:19px;font-weight:700;letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.iconbtn{border:none;background:none;padding:6px 8px;border-radius:8px;font-size:15px;color:var(--accent);font-weight:500}
+.iconbtn:active{background:var(--line)}
+.banner{margin-block:12px;padding:10px 12px;border-radius:10px;border:1px solid var(--chalk);color:var(--chalk);font-size:14px}
+.section-label{font-size:12px;letter-spacing:.08em;color:var(--muted);margin-block:18px 6px}
+.list{display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;padding:12px 14px;border:none;border-bottom:1px solid var(--line);background:none;text-align:left;width:100%}
+.row:last-child{border-bottom:none}
+.row .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .meta{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.row .thumb{width:44px;height:58px;border-radius:5px;object-fit:cover;background:var(--line);flex:none}
+.folder-ico{width:36px;height:28px;flex:none;border-radius:4px 4px 6px 6px;background:var(--accent);opacity:.85;position:relative}
+.folder-ico::before{content:"";position:absolute;left:0;top:-5px;width:15px;height:7px;border-radius:3px 3px 0 0;background:inherit}
+.empty{padding:28px 16px;text-align:center;color:var(--muted);font-size:14px;line-height:1.8}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:12px}
+.tile{position:relative;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface);aspect-ratio:3/4;padding:0;max-width:100%}
+.tile img{width:100%;height:100%;object-fit:cover;object-position:top}
+.tile .no{position:absolute;left:6px;top:6px;font-size:12px;background:var(--shade);color:#fff;border-radius:9px;padding:0 7px;font-variant-numeric:tabular-nums}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:1px 8px;border-radius:9px;border:1px solid var(--line);color:var(--muted);background:var(--surface);white-space:nowrap}
+.chip.ok{color:var(--ok);border-color:var(--ok)} .chip.run{color:var(--chalk);border-color:var(--chalk)} .chip.err{color:var(--err);border-color:var(--err)} .chip.warn{color:var(--chalk);border-color:var(--chalk)}
+.tile .chip{position:absolute;right:5px;bottom:5px}
+.grid#grid{gap:4px;grid-template-columns:repeat(3,minmax(0,1fr));touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.grid#grid .tile{border:none;border-radius:4px}
+.tile .dot{position:absolute;left:6px;bottom:6px;width:9px;height:9px;border-radius:50%;background:var(--muted);box-shadow:0 0 0 2px var(--surface)}
+.tile .dot.ok{background:var(--ok)} .tile .dot.warn,.tile .dot.run{background:var(--chalk)} .tile .dot.err{background:var(--err)}
+.folder-thumb{display:flex;align-items:center;justify-content:center}
+.tile .check{display:none;position:absolute;right:6px;top:6px;width:24px;height:24px;border-radius:50%;border:2px solid #fff;background:var(--shade)}
+.grid .tile img{transition:transform .12s}
+.tile.picked .check{display:block}
+.tile.picked{outline:3px solid var(--accent);outline-offset:-3px}
+.tile.picked img{transform:scale(.92)}
+.tile.picked .check{background:var(--accent);border-color:var(--accent)}
+.tile.picked .check::after{content:"";position:absolute;left:6px;top:2px;width:6px;height:11px;border:solid var(--accent-ink);border-width:0 2.5px 2.5px 0;transform:rotate(45deg)}
+.bar{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--surface);border-top:1px solid var(--line);padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px))}
+.bar-inner{max-width:720px;margin:0 auto;display:flex;gap:8px}
+.btn{flex:1;min-height:48px;border-radius:12px;border:1px solid var(--line);background:var(--surface);font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 10px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.small{flex:none;min-height:36px;border-radius:9px;font-size:14px;font-weight:500;padding:0 12px}
+.stage{margin-top:12px;border-radius:12px;padding:12px;background-color:var(--surface);background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:14px 14px;border:1px solid var(--line);text-align:center}
+.stage img.page{max-width:100%;max-height:62vh;box-shadow:0 2px 10px var(--shade);background:#fff}
+.tools{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.seg{display:flex;background:var(--line);border-radius:10px;padding:3px;margin-top:12px}
+.seg button{flex:1;border:none;background:none;border-radius:8px;padding:7px 0;font-size:14px;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--ink);font-weight:700}
+.crop{position:relative;display:inline-block;max-width:100%;touch-action:none;user-select:none;-webkit-user-select:none}
+.crop img{display:block;max-width:100%;max-height:62vh}
+.crop svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.crop .edge{fill:rgba(79,179,147,.18);stroke:var(--accent);stroke-width:2}
+.crop circle,.crop rect{fill:var(--surface);stroke:var(--accent);stroke-width:3}
+.loupe{position:fixed;z-index:30;width:110px;height:110px;border-radius:50%;border:3px solid var(--accent);background-color:var(--surface);background-repeat:no-repeat;box-shadow:0 4px 14px var(--shade);pointer-events:none}
+.loupe::after{content:"";position:absolute;left:50%;top:50%;width:10px;height:10px;margin:-5px 0 0 -5px;border:2px solid var(--accent);border-radius:50%}
+.doc{margin-top:12px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-family:var(--font-math);font-size:16px;line-height:1.85;overflow-x:auto;min-width:0}
+.doc p{margin:.2em 0} .doc h2{font-family:var(--font-ui);font-size:18px;margin:.5em 0 .2em} .doc h3,.doc h4{font-family:var(--font-ui);font-size:16px;margin:.4em 0 .2em}
+.doc table{border-collapse:collapse;margin:8px auto} .doc td{border:1px solid var(--muted);padding:2px 10px;text-align:center}
+.doc img{display:block;max-width:100%;margin:8px auto;border:1px dashed var(--line)}
+.doc .wait{font-family:var(--font-mono);font-size:13px;color:var(--muted);white-space:pre-wrap}
+.doc mjx-container[display="true"]{overflow-x:auto;overflow-y:hidden;max-width:100%}
+textarea.tex{width:100%;min-height:260px;margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--surface);font-family:var(--font-mono);font-size:13px;line-height:1.55}
+.issues{margin-top:10px;font-size:14px;color:var(--chalk);border-left:3px solid var(--chalk);padding-left:10px}
+.err{margin-top:10px;font-size:14px;color:var(--err)}
+.note{font-size:13px;color:var(--muted);margin-top:8px}
+.sheet-bg{position:fixed;inset:0;z-index:40;background:var(--shade);display:flex;align-items:flex-end;justify-content:center}
+.sheet{width:100%;max-width:720px;background:var(--surface);border-radius:16px 16px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:10px;max-height:88vh;overflow:auto}
+.sheet h2{margin:0 0 4px;font-size:17px}
+.sheet input[type=text]{width:100%;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg)}
+.sheet .btns{display:flex;gap:8px;margin-top:6px}
+.opt{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:10px}
+.opt input{margin-top:4px}
+.opt small{display:block;color:var(--muted);font-size:13px}
+.cam{position:fixed;inset:0;z-index:60;background:#000;color:#fff}
+.cam video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.cam svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.cam polygon{fill:rgba(255,200,40,.12);stroke:#ffc828;stroke-width:3;stroke-linejoin:round;transition:all .18s}
+.cam polygon.ok{fill:rgba(79,179,147,.22);stroke:#4fd3a3}
+.cam-flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .15s}.cam-flash.on{opacity:.8}
+.cam-top{position:absolute;left:0;right:0;top:0;padding:calc(env(safe-area-inset-top,0px) + 8px) 12px 10px;display:flex;gap:8px;align-items:center;background:linear-gradient(#000a,#0000)}
+.cam-hint{flex:1;text-align:center;font-size:14px;margin-right:60px}
+.cam-bottom{position:absolute;left:0;right:0;bottom:0;padding:14px 16px calc(env(safe-area-inset-bottom,0px) + 18px);display:grid;grid-template-columns:1fr auto 1fr;align-items:center;background:linear-gradient(#0000,#000b)}
+.cam-shutter{width:74px;height:74px;border-radius:50%;border:5px solid #fff;background:#fff3}
+.cam-shutter:active{background:#fff8}
+.cam-side{border:none;background:#0008;color:#fff;border-radius:18px;padding:8px 12px;font-size:14px;justify-self:start}
+.cam-right{display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+.cam-side.done{background:#fff;color:#000;font-weight:700}
+.toast{position:fixed;left:50%;bottom:calc(120px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:70;background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:10px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw}
+.toast.on{opacity:.94}
+.progress{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:10px}
+.progress i{display:block;height:100%;background:var(--accent);transition:width .3s}
+@media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+
+<div class="app" id="app"></div>
+<input type="file" id="camIn" accept="image/*" capture="environment" hidden>
+<input type="file" id="picIn" accept="image/*,application/pdf,.pdf" multiple hidden>
+<div class="toast" id="toast"></div>
+
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['$','$'],['\\(','\\)']], displayMath: [['$$','$$'],['\\[','\\]']],
+         processEnvironments: true, packages: {'[+]': ['noerrors']},
+         macros: { bm: ['\\boldsymbol{#1}', 1] } },
+  loader: { load: ['[tex]/noerrors'] },
+  svg: { fontCache: 'global' },
+  startup: { typeset: false }
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js"></script>
+<script>
+"use strict";
+/* =====================================================================
+   スキャンツール — 撮影 → 補正 → Claudeで文字起こし → 文字付きPDF / TeX
+   ===================================================================== */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function toast(m){ const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 2400); }
+const today = () => { const d = new Date(); return `${d.getMonth()+1}月${d.getDate()}日 ${d.getHours()}時${String(d.getMinutes()).padStart(2,'0')}分`; };
+
+/* ---------- 状態の記録（うまく動かないときに「設定 → 動作の状態」で見られるように） ---------- */
+const Diag = { caps: {}, errors: [], log(where, e){ this.errors.push(`${new Date().toLocaleTimeString()} ${where}: ${e?.code || ''} ${e?.message || e}`.slice(0, 220)); if (this.errors.length > 12) this.errors.shift(); } };
+window.addEventListener('error', e => Diag.log('error', e.error || e.message));
+window.addEventListener('unhandledrejection', e => Diag.log('promise', e.reason));
+
+/* ---------------------------------------------------------------------
+   保存先：このiPhone（ブラウザ）の中の IndexedDB。ネットに上げない
+   --------------------------------------------------------------------- */
+const IDB = {
+  db: null,
+  open(){
+    return new Promise((res, rej) => {
+      const r = indexedDB.open('scan-tool', 1);
+      r.onupgradeneeded = () => { const d = r.result; d.createObjectStore('kv'); d.createObjectStore('pages', { keyPath: 'id' }); d.createObjectStore('blobs'); };
+      r.onsuccess = () => res(this.db = r.result); r.onerror = () => rej(r.error);
+    });
+  },
+  req(store, mode, fn){
+    return new Promise((res, rej) => {
+      const t = this.db.transaction(store, mode), q = fn(t.objectStore(store));
+      t.oncomplete = () => res(q?.result); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error || new Error('保存が中断されました（空き容量を確認）'));
+    });
+  },
+};
+const Store = {
+  mode: 'local',
+  lib: { folders: [], scans: [], settings: { tier: 'default', autofix: true, filter: 'scan', engine: 'auto', apiKey: '', auto: true } },
+  urls: new Map(), loading: new Set(),
+  async init(){
+    try{
+      await IDB.open();
+      const v = await IDB.req('kv', 'readonly', s => s.get('library'));
+      if (v) this.lib = { folders: v.folders || [], scans: [], settings: { ...this.lib.settings, ...(v.settings || {}) } };
+      navigator.storage?.persist?.().catch(() => {}); // iPhoneが勝手に消さないようにお願いする
+    }catch(e){ console.warn('idb', e); Diag.log('init', e); this.mode = 'memory'; }
+  },
+  saveLib(){
+    if (this.mode !== 'local') return Promise.resolve();
+    const body = JSON.parse(JSON.stringify(this.lib));
+    return IDB.req('kv', 'readwrite', s => s.put(body, 'library')).catch(e => { Diag.log('saveLib', e); toast('保存に失敗しました（空き容量を確認してください）'); });
+  },
+  async loadPages(f){
+    if (this.mode !== 'local') return [];
+    const out = [];
+    for (const id of f.pages || []){ const p = await IDB.req('pages', 'readonly', s => s.get(id)); if (p) out.push(p); }
+    return out;
+  },
+  savePage(p){
+    p.updated = Date.now();
+    if (this.mode !== 'local') return Promise.resolve();
+    const body = JSON.parse(JSON.stringify({ ...p, live: undefined }));
+    return IDB.req('pages', 'readwrite', s => s.put(body)).catch(e => { Diag.log('savePage', e); toast('保存に失敗しました（空き容量を確認してください）'); });
+  },
+  deletePage(p){ return this.mode === 'local' ? IDB.req('pages', 'readwrite', s => s.delete(p.id)).catch(() => {}) : Promise.resolve(); },
+  async upload(blob){
+    const id = newId();
+    if (this.mode === 'local') await IDB.req('blobs', 'readwrite', s => s.put(blob, id));
+    this.urls.set(id, URL.createObjectURL(blob));
+    return id;
+  },
+  async blob(id){ return this.mode === 'local' ? IDB.req('blobs', 'readonly', s => s.get(id)) : null; },
+  // 画面の <img> 用。まだ読み込んでいなければ読み込んでから描き直す
+  url(id){
+    if (!id) return '';
+    const u = this.urls.get(id); if (u) return u;
+    if (!this.loading.has(id)){
+      this.loading.add(id);
+      this.blob(id).then(b => { if (b){ this.urls.set(id, URL.createObjectURL(b)); scheduleRender(); } }).finally(() => this.loading.delete(id));
+    }
+    return 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+  },
+  async dropAsset(id){
+    if (!id) return;
+    const u = this.urls.get(id); if (u) URL.revokeObjectURL(u); this.urls.delete(id);
+    if (this.mode === 'local') await IDB.req('blobs', 'readwrite', s => s.delete(id)).catch(() => {});
+  },
+};
+let renderTimer = null;
+function scheduleRender(){ clearTimeout(renderTimer); renderTimer = setTimeout(() => { if (!S.cropping && S.view !== 'camera') render(); }, 60); }
+async function assetCanvas(id){
+  const b = await Store.blob(id);
+  if (!b) return urlToCanvas(Store.urls.get(id) || '');
+  let src; try{ src = await createImageBitmap(b); }catch{ src = await loadImage(URL.createObjectURL(b)); }
+  const c = makeCanvas(src.width, src.height); c.getContext('2d').drawImage(src, 0, 0); src.close?.();
+  return c;
+}
+
+/* ---------------------------------------------------------------------
+   画像処理：読み込み、紙の四隅の自動検出、台形補正、影除去
+   --------------------------------------------------------------------- */
+// iPhoneは画面内のcanvasの合計サイズに上限があるので、使い終わったら必ず0にして手放す
+function freeCanvas(...cs){ for (const c of cs) if (c && c.width){ c.width = 0; c.height = 0; } }
+function makeCanvas(w, h){ const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; }
+const toBlob = (c, q = 0.9) => new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('画像の書き出しに失敗（メモリ不足の可能性）')), 'image/jpeg', q));
+function loadImage(src){
+  return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('画像を読み込めません')); im.src = src; });
+}
+async function fileToCanvas(file, maxSide = 2400){
+  let src;
+  try{ src = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+  catch{ src = await loadImage(URL.createObjectURL(file)); }
+  const r = Math.min(1, maxSide / Math.max(src.width, src.height));
+  const c = makeCanvas(src.width * r, src.height * r);
+  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  src.close?.();
+  return c;
+}
+async function urlToCanvas(url){
+  const im = await loadImage(url);
+  const c = makeCanvas(im.naturalWidth, im.naturalHeight);
+  c.getContext('2d').drawImage(im, 0, 0);
+  return c;
+}
+function grayOf(canvas, maxSide){
+  const r = Math.min(1, maxSide / Math.max(canvas.width, canvas.height));
+  const c = makeCanvas(canvas.width * r, canvas.height * r);
+  const ctx = c.getContext('2d'); ctx.drawImage(canvas, 0, 0, c.width, c.height);
+  const d = ctx.getImageData(0, 0, c.width, c.height).data;
+  const g = new Uint8Array(c.width * c.height);
+  for (let i = 0, j = 0; i < g.length; i++, j += 4) g[i] = (d[j] * 77 + d[j+1] * 150 + d[j+2] * 29) >> 8;
+  const out = { g, w: c.width, h: c.height, r }; freeCanvas(c);
+  return out;
+}
+function otsu(g){
+  const hist = new Array(256).fill(0); for (const v of g) hist[v]++;
+  let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
+  let sumB = 0, wB = 0, best = 0, th = 127; const n = g.length;
+  for (let t = 0; t < 256; t++){
+    wB += hist[t]; if (!wB) continue; const wF = n - wB; if (!wF) break;
+    sumB += t * hist[t]; const mB = sumB / wB, mF = (sum - sumB) / wF;
+    const v = wB * wF * (mB - mF) ** 2; if (v > best){ best = v; th = t; }
+  }
+  return th;
+}
+// 紙の領域を探し、四隅と上下の縁の曲がり（本のたわみ）を返す。見つからなければ null
+// 戻り値 { corners:[tl,tr,br,bl], mids:[topMid, bottomMid] }（すべて 0〜1 の比率）
+// 「明るさ」「色の薄さ」「その組み合わせ」の3通りで紙を探し、いちばん四角形らしく取れたものを使う
+function detectByRegion(canvas){
+  const r = Math.min(1, 420 / Math.max(canvas.width, canvas.height));
+  const c = makeCanvas(canvas.width * r, canvas.height * r), ctx = c.getContext('2d');
+  ctx.filter = 'blur(1px)'; ctx.drawImage(canvas, 0, 0, c.width, c.height);
+  const w = c.width, h = c.height, d = ctx.getImageData(0, 0, w, h).data, N = w * h;
+  const V = new Uint8Array(N), SAT = new Uint8Array(N), MIX = new Uint8Array(N);
+  for (let i = 0, k = 0; i < N; i++, k += 4){
+    const mx = Math.max(d[k], d[k+1], d[k+2]), mn = Math.min(d[k], d[k+1], d[k+2]), sat = mx ? (mx - mn) / mx : 0;
+    V[i] = mx; SAT[i] = Math.max(0, 255 - sat * 600); MIX[i] = Math.max(0, Math.min(255, mx * (1 - sat * 0.9)));
+  }
+  freeCanvas(c);
+  let best = null;
+  for (const score of [MIX, SAT, V]){
+    const f = findPaper(score, w, h);
+    if (f && (!best || f.quality > best.quality)) best = f;
+  }
+  return best && best.quality > 0.8 ? { corners: best.corners, mids: best.mids, profile: best.profile } : null;
+}
+function findPaper(score, w, h){
+  const N = w * h, th = otsu(score);
+  const bright = new Uint8Array(N); for (let i = 0; i < N; i++) bright[i] = score[i] > th ? 1 : 0;
+  // 画面の縁から「紙でないところ」をたどる → たどれなかった所が紙（文字の穴も埋まる）
+  const outside = new Uint8Array(N), st = new Int32Array(N); let top = 0;
+  const seed = p => { if (!bright[p] && !outside[p]){ outside[p] = 1; st[top++] = p; } };
+  for (let x = 0; x < w; x++){ seed(x); seed((h - 1) * w + x); }
+  for (let y = 0; y < h; y++){ seed(y * w); seed(y * w + w - 1); }
+  while (top){
+    const p = st[--top], x = p % w;
+    if (x > 0) seed(p - 1); if (x < w - 1) seed(p + 1); if (p >= w) seed(p - w); if (p < N - w) seed(p + w);
+  }
+  const lab = new Int32Array(N); let L = 0, bestL = 0, bestN = 0;
+  for (let s = 0; s < N; s++){
+    if (outside[s] || lab[s]) continue;
+    L++; let n = 0; top = 0; st[top++] = s; lab[s] = L;
+    while (top){
+      const p = st[--top], x = p % w; n++;
+      if (x > 0 && !outside[p-1] && !lab[p-1]){ lab[p-1] = L; st[top++] = p-1; }
+      if (x < w-1 && !outside[p+1] && !lab[p+1]){ lab[p+1] = L; st[top++] = p+1; }
+      if (p >= w && !outside[p-w] && !lab[p-w]){ lab[p-w] = L; st[top++] = p-w; }
+      if (p < N-w && !outside[p+w] && !lab[p+w]){ lab[p+w] = L; st[top++] = p+w; }
+    }
+    if (n > bestN){ bestN = n; bestL = L; }
+  }
+  const frac = bestN / N;
+  if (frac < 0.10 || frac > 0.985) return null;
+  let tl = [0, 0, Infinity], tr = [0, 0, -Infinity], br = [0, 0, -Infinity], bl = [0, 0, Infinity];
+  const topY = new Float32Array(w).fill(-1), botY = new Float32Array(w).fill(-1);
+  for (let p = 0; p < N; p++){
+    if (lab[p] !== bestL) continue;
+    const x = p % w, y = (p / w) | 0, s = x + y, df = x - y;
+    if (s < tl[2]) tl = [x, y, s]; if (s > br[2]) br = [x, y, s];
+    if (df > tr[2]) tr = [x, y, df]; if (df < bl[2]) bl = [x, y, df];
+    if (topY[x] < 0) topY[x] = y; botY[x] = y;
+  }
+  const corners = [tl, tr, br, bl].map(([x, y]) => [x, y]);
+  if (corners.filter(([x, y]) => x < 2 || x > w - 3 || y < 2 || y > h - 3).length >= 3) return null;
+  const midOf = (a, b, arr) => {
+    const xm = (a[0] + b[0]) / 2, span = Math.max(4, Math.abs(b[0] - a[0]) * 0.06), vals = [];
+    for (let x = Math.round(xm - span); x <= Math.round(xm + span); x++) if (arr[x] >= 0) vals.push(arr[x]);
+    const lineY = (a[1] + b[1]) / 2;
+    if (!vals.length) return [xm, lineY];
+    vals.sort((p, q) => p - q); const y = vals[vals.length >> 1];
+    return Math.abs(y - lineY) > h * 0.006 ? [xm, y] : [xm, lineY];
+  };
+  const mids = [midOf(corners[0], corners[1], topY), midOf(corners[3], corners[2], botY)];
+  // 縁の形をそのまま11点で記録（本のたわみはサインカーブに近く、2次曲線より正確に戻せる）
+  const profileOf = (a, b, arr) => {
+    const pts = []; let dev = 0;
+    for (let i = 0; i <= 10; i++){
+      const x = a[0] + (b[0] - a[0]) * i / 10, xi = Math.round(x), vals = [];
+      for (let k = xi - 2; k <= xi + 2; k++) if (arr[k] >= 0) vals.push(arr[k]);
+      const lineY = a[1] + (b[1] - a[1]) * i / 10;
+      let y = vals.length ? vals.sort((p, q) => p - q)[vals.length >> 1] : lineY;
+      if (i === 0 || i === 10) y = lineY;
+      dev = Math.max(dev, Math.abs(y - lineY)); pts.push([x, y]);
+    }
+    return dev > h * 0.006 ? pts : null;
+  };
+  const prof = [profileOf(corners[0], corners[1], topY), profileOf(corners[3], corners[2], botY)];
+  // 四角形らしさ：塊の面積と、四隅（＋縁の曲がり）で囲んだ面積の近さ
+  const poly = [corners[0], mids[0], corners[1], corners[2], mids[1], corners[3]];
+  let area = 0; for (let i = 0; i < poly.length; i++){ const [x1, y1] = poly[i], [x2, y2] = poly[(i + 1) % poly.length]; area += x1 * y2 - x2 * y1; }
+  area = Math.abs(area) / 2;
+  const quality = Math.min(area, bestN) / Math.max(area, bestN) * Math.min(1, frac / 0.15);
+  const nz = ([x, y]) => [x / (w - 1), y / (h - 1)];
+  // 机が細く写り込まないよう、角をほんの少し内側へ
+  const cx = corners.reduce((a, q) => a + q[0], 0) / 4, cy = corners.reduce((a, q) => a + q[1], 0) / 4;
+  const ins = corners.map(([x, y]) => [x + (cx - x) * 0.008, y + (cy - y) * 0.008]);
+  const profile = prof[0] || prof[1] ? prof.map((pr, i) => (pr || [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(k => {
+    const a = i ? corners[3] : corners[0], b = i ? corners[2] : corners[1];
+    return [a[0] + (b[0] - a[0]) * k / 10, a[1] + (b[1] - a[1]) * k / 10];
+  })).map(nz)) : null;
+  return { corners: ins.map(nz), mids: mids.map(nz), profile, quality };
+}
+// ---- 紙の検出（その2）：輪郭の直線を探して四角形を組み立てる ----
+// 明るさの差が小さい（白い机に白い紙）、他の物と接している、紙が画面からはみ出している、といった写真に強い
+// 色つきの縮小画像（ぼかし済み）：辺の内と外の色の違いを見るのに使う
+function colorSmall(canvas, w, h){
+  const c = makeCanvas(w, h), ctx = c.getContext('2d'); ctx.drawImage(canvas, 0, 0, w, h);
+  const d = ctx.getImageData(0, 0, w, h).data; freeCanvas(c);
+  const ch = [0, 1, 2].map(k => { let a = new Float32Array(w * h); for (let i = 0; i < w * h; i++) a[i] = d[i * 4 + k]; return boxBlur(a, w, h, 2); });
+  return ch;
+}
+function edgeMap(canvas, maxSide = 360){
+  const { g, w, h } = grayOf(canvas, maxSide);
+  let f = new Float32Array(g.length); for (let i = 0; i < g.length; i++) f[i] = g[i];
+  // 文字はぼかして消し、紙の縁のような長くはっきりした境目だけを残す
+  f = boxBlur(boxBlur(f, w, h, 2), w, h, 2);
+  const mag = new Float32Array(w * h), dir = new Uint8Array(w * h);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++){
+    const i = y * w + x;
+    const gx = -f[i-w-1] - 2*f[i-1] - f[i+w-1] + f[i-w+1] + 2*f[i+1] + f[i+w+1];
+    const gy = -f[i-w-1] - 2*f[i-w] - f[i-w+1] + f[i+w-1] + 2*f[i+w] + f[i+w+1];
+    mag[i] = Math.hypot(gx, gy);
+    const a = (Math.atan2(gy, gx) * 180 / Math.PI + 180) % 180;
+    dir[i] = a < 22.5 || a >= 157.5 ? 0 : a < 67.5 ? 1 : a < 112.5 ? 2 : 3;
+  }
+  // しきい値：強い方から約8%（ただし弱すぎるものは除く）
+  // 弱い縁（白い机の上の白い紙）も拾えるよう、いちばん強い境目の2割程度の強さまで輪郭とみなす
+  const sorted = Float32Array.from(mag).sort(), th = Math.max(6, sorted[Math.floor(sorted.length * 0.985)] * 0.2);
+  const edge = new Uint8Array(w * h);
+  const off = [[1, 0], [1, 1], [0, 1], [-1, 1]];
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++){
+    const i = y * w + x, m = mag[i]; if (m < th) continue;
+    const [dx, dy] = off[dir[i]];
+    if (m >= mag[i + dy * w + dx] && m >= mag[i - dy * w - dx]) edge[i] = 1; // 細線化
+  }
+  return { edge, w, h, f };
+}
+function detectByEdges(canvas){
+  const { edge, w, h, f } = edgeMap(canvas);
+  const RGB = colorSmall(canvas, w, h);
+  const colAt = (x, y) => { x = Math.round(x); y = Math.round(y); if (x < 0 || y < 0 || x >= w || y >= h) return null; const i = y * w + x; return [RGB[0][i], RGB[1][i], RGB[2][i]]; };
+  const cdist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  const nT = 180, diag = Math.ceil(Math.hypot(w, h)), nR = 2 * diag + 1;
+  const cs = new Float32Array(nT), sn = new Float32Array(nT);
+  for (let t = 0; t < nT; t++){ cs[t] = Math.cos(t * Math.PI / nT); sn[t] = Math.sin(t * Math.PI / nT); }
+  const acc = new Int32Array(nT * nR);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){
+    if (!edge[y * w + x]) continue;
+    for (let t = 0; t < nT; t++) acc[t * nR + Math.round(x * cs[t] + y * sn[t]) + diag]++;
+  }
+  // 投票の多い直線（近いものはまとめる）
+  const minVotes = Math.min(w, h) * 0.12, cand = [];
+  for (let t = 0; t < nT; t++) for (let r = 0; r < nR; r++){ const v = acc[t * nR + r]; if (v >= minVotes) cand.push([v, t, r]); }
+  cand.sort((a, b) => b[0] - a[0]);
+  const lines = [];
+  for (const [v, t, r] of cand){
+    if (lines.length >= 40) break;
+    if (lines.some(L => { const dt = Math.min(Math.abs(L.t - t), nT - Math.abs(L.t - t)); return dt < 6 && Math.abs(L.r - (r - diag)) < Math.min(w, h) * 0.04; })) continue;
+    lines.push({ t, r: r - diag, v });
+  }
+  // 紙が画面からはみ出しているときのために、画面の縁も直線の候補に入れる
+  const H = lines.filter(L => L.t > 45 && L.t < 135).slice(0, 14).concat([{ t: 90, r: 0, border: 1 }, { t: 90, r: h - 1, border: 1 }]);
+  const V = lines.filter(L => L.t <= 45 || L.t >= 135).slice(0, 14).concat([{ t: 0, r: 0, border: 1 }, { t: 0, r: w - 1, border: 1 }]);
+  if (lines.length < 2) return null;
+  const meet = (a, b) => {
+    const d = cs[a.t] * sn[b.t] - sn[a.t] * cs[b.t]; if (Math.abs(d) < 1e-6) return null;
+    return [(a.r * sn[b.t] - sn[a.t] * b.r) / d, (cs[a.t] * b.r - a.r * cs[b.t]) / d];
+  };
+  // 輪郭に沿って本当に線があるか（近くに輪郭点がある割合）
+  const near = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (edge[y * w + x])
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++){ const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < w && yy < h) near[yy * w + xx] = 1; }
+  // 辺の評価：(1) その線に沿って輪郭があるか (2) 内側と外側で明るさがはっきり違うか（文字の行はここで落ちる）
+  const gAt = (x, y) => { x = Math.round(x); y = Math.round(y); return x < 0 || y < 0 || x >= w || y >= h ? null : f[y * w + x]; };
+  const support = (a, b, c) => { // c は四角形の中心。画面の外の部分は数えない
+    let hit = 0, n = 0, diff = 0, dn = 0, ins = 0; const inC = [0, 0, 0], outC = [0, 0, 0];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    let nx = -(b[1] - a[1]) / len, ny = (b[0] - a[0]) / len;
+    if ((c[0] - a[0]) * nx + (c[1] - a[1]) * ny < 0){ nx = -nx; ny = -ny; } // 内向き
+    for (let i = 2; i <= 58; i++){
+      const x = a[0] + (b[0] - a[0]) * i / 60, y = a[1] + (b[1] - a[1]) * i / 60;
+      if (x < 2 || y < 2 || x > w - 3 || y > h - 3) continue;
+      n++; hit += near[Math.round(y) * w + Math.round(x)];
+      const ci = colAt(x + nx * 5, y + ny * 5), co = colAt(x - nx * 5, y - ny * 5);
+      if (ci && co){ diff += cdist(ci, co); ins += ci[0] * .3 + ci[1] * .59 + ci[2] * .11; for (let k = 0; k < 3; k++){ inC[k] += ci[k]; outC[k] += co[k]; } dn++; }
+    }
+    if (n < 12) return null;
+    return { s: hit / n, c: dn ? diff / dn : 0, inside: dn ? ins / dn : 0, inC: inC.map(v => v / (dn || 1)), outC: outC.map(v => v / (dn || 1)) };
+  };
+  let best = null;
+  const Hs = H, Vs = V;
+  for (let i = 0; i < Hs.length; i++) for (let j = i + 1; j < Hs.length; j++)
+  for (let k = 0; k < Vs.length; k++) for (let l = k + 1; l < Vs.length; l++){
+    const pts = [meet(Hs[i], Vs[k]), meet(Hs[i], Vs[l]), meet(Hs[j], Vs[l]), meet(Hs[j], Vs[k])];
+    if (pts.some(p => !p || p[0] < -0.25 * w || p[0] > 1.25 * w || p[1] < -0.25 * h || p[1] > 1.25 * h)) continue;
+    const q = orderQuad(pts);
+    let area = 0; for (let m = 0; m < 4; m++){ const [x1, y1] = q[m], [x2, y2] = q[(m + 1) % 4]; area += x1 * y2 - x2 * y1; }
+    area = Math.abs(area) / 2;
+    if (area < 0.12 * w * h || !convex(q)) continue;
+    const cc = [q.reduce((a, p) => a + p[0], 0) / 4, q.reduce((a, p) => a + p[1], 0) / 4];
+    const sides = [support(q[0], q[1], cc), support(q[1], q[2], cc), support(q[2], q[3], cc), support(q[3], q[0], cc)];
+    const seen = sides.filter(x => x !== null); if (seen.length < 3) continue; // 画面の縁を使ってよいのは1辺だけ
+    if (seen.some(x => x.s < 0.3 || x.c < 14)) continue;       // 輪郭がない・内外の色の差がない辺はだめ（文字の行はここで落ちる）
+    // 紙の外側は「机」なので、どの辺でも外側の色はだいたい同じ。内側の模様の境目を紙の縁と間違えないための決め手
+    let spread = 0; for (let i = 0; i < seen.length; i++) for (let j = i + 1; j < seen.length; j++) spread = Math.max(spread, cdist(seen[i].outC, seen[j].outC));
+    if (seen.length === 3){ // 画面の縁を辺にするなら、その縁ぎわが本当に紙（ほかの辺の内側と同じ明るさ）であること
+      const bi = sides.findIndex(x => x === null), a = q[bi], bb = q[(bi + 1) % 4];
+      // 縁ぎわの色が「机の色（ほかの辺の外側の色）」に近ければ、紙ははみ出していない
+      const desk = [0, 1, 2].map(k => seen.reduce((t, x) => t + x.outC[k], 0) / seen.length);
+      let near = 0, k = 0;
+      for (let i = 2; i <= 58; i++){
+        const x = Math.min(w - 4, Math.max(3, a[0] + (bb[0] - a[0]) * i / 60)), y = Math.min(h - 4, Math.max(3, a[1] + (bb[1] - a[1]) * i / 60));
+        const v = colAt(x + (cc[0] - x) * 0.04, y + (cc[1] - y) * 0.04); if (v){ k++; if (cdist(v, desk) < 30) near++; }
+      }
+      if (!k || near / k > 0.25) continue;
+    }
+    const sup = seen.reduce((a, x) => a + x.s, 0) / seen.length;
+    const con = Math.min(1, seen.reduce((a, x) => a + x.c, 0) / seen.length / 70);
+    // 紙はいちばん外側の大きな四角形：面積を強めに評価（文字のかたまりの四角形に負けないように）
+    const score = (0.6 * sup + 0.4 * con) * Math.pow(Math.min(1, area / (w * h)), 0.6) * (seen.length === 4 ? 1 : 0.9) / (1 + spread / 70);
+    if (!best || score > best.score) best = { q, score, sup };
+  }
+  if (!best || best.sup < 0.45) return null;
+  return { corners: best.q.map(([x, y]) => [Math.min(1, Math.max(0, x / (w - 1))), Math.min(1, Math.max(0, y / (h - 1)))]), score: best.score };
+}
+function orderQuad(pts){
+  const cx = pts.reduce((a, p) => a + p[0], 0) / 4, cy = pts.reduce((a, p) => a + p[1], 0) / 4;
+  const byAng = pts.slice().sort((a, b) => Math.atan2(a[1] - cy, a[0] - cx) - Math.atan2(b[1] - cy, b[0] - cx));
+  // 左上（x+y最小）から時計回り
+  let s = 0; byAng.forEach((p, i) => { if (p[0] + p[1] < byAng[s][0] + byAng[s][1]) s = i; });
+  return [0, 1, 2, 3].map(i => byAng[(s + i) % 4]);
+}
+function convex(q){
+  let sign = 0;
+  for (let i = 0; i < 4; i++){
+    const [a, b, c] = [q[i], q[(i + 1) % 4], q[(i + 2) % 4]];
+    const z = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+    if (Math.abs(z) < 1e-9) return false;
+    if (!sign) sign = Math.sign(z); else if (Math.sign(z) !== sign) return false;
+  }
+  return true;
+}
+// 2つの方法の結果を、輪郭の線とどれだけ重なるかで比べて良い方を使う
+function quadSupport(canvas, corners){
+  const { edge, w, h } = edgeMap(canvas);
+  const near = (x, y) => { for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++){ const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < w && yy < h && edge[yy * w + xx]) return 1; } return 0; };
+  const q = corners.map(([x, y]) => [x * (w - 1), y * (h - 1)]); let hit = 0, n = 0;
+  for (let s = 0; s < 4; s++){ const a = q[s], b = q[(s + 1) % 4];
+    for (let i = 0; i <= 60; i++){ const x = Math.round(a[0] + (b[0] - a[0]) * i / 60), y = Math.round(a[1] + (b[1] - a[1]) * i / 60);
+      if (x < 2 || y < 2 || x > w - 3 || y > h - 3) continue; n++; hit += near(x, y); } }
+  return n ? hit / n : 0;
+}
+
+// ---- 四角形の評価と、辺を本当の縁に吸い付かせる仕上げ ----
+// 縮小画像・輪郭・色をまとめて用意（1枚の写真につき1回）
+function prepScene(canvas){
+  const { edge, w, h } = edgeMap(canvas);
+  const RGB = colorSmall(canvas, w, h);
+  const near = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (edge[y * w + x])
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++){ const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < w && yy < h) near[yy * w + xx] = 1; }
+  const col = (x, y) => { x = Math.round(x); y = Math.round(y); if (x < 0 || y < 0 || x >= w || y >= h) return null; const i = y * w + x; return [RGB[0][i], RGB[1][i], RGB[2][i]]; };
+  return { w, h, near, col };
+}
+const cdist3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+// 線分 a→b（画面内の部分だけ）の「輪郭の乗り具合」と「内と外の色の差」。cは内側の点
+function sideStats(sc, a, b, c){
+  const { w, h, near, col } = sc;
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  let nx = -(b[1] - a[1]) / len, ny = (b[0] - a[0]) / len;
+  if ((c[0] - a[0]) * nx + (c[1] - a[1]) * ny < 0){ nx = -nx; ny = -ny; }
+  let n = 0, hit = 0, dn = 0, diff = 0; const outC = [0, 0, 0], inC = [0, 0, 0];
+  const off = Math.max(3, Math.round(Math.min(w, h) * 0.015));
+  for (let i = 3; i <= 57; i++){
+    const x = a[0] + (b[0] - a[0]) * i / 60, y = a[1] + (b[1] - a[1]) * i / 60;
+    if (x < 2 || y < 2 || x > w - 3 || y > h - 3) continue;
+    n++; hit += near[Math.round(y) * w + Math.round(x)];
+    const ci = col(x + nx * off, y + ny * off), co = col(x - nx * off, y - ny * off);
+    if (ci && co){ diff += cdist3(ci, co); dn++; for (let k = 0; k < 3; k++){ inC[k] += ci[k]; outC[k] += co[k]; } }
+  }
+  if (n < 10 || dn < 6) return null;
+  return { s: hit / n, c: diff / dn, outC: outC.map(v => v / dn), inC: inC.map(v => v / dn) };
+}
+// 影で暗くなっても変わらない「色み」での距離（机の色が全周で同じかを見るのに使う）
+const chromaDist = (a, b) => { const sa = a[0] + a[1] + a[2] + 1, sb = b[0] + b[1] + b[2] + 1; return Math.hypot(...[0, 1, 2].map(k => (a[k] / sa - b[k] / sb) * 300)); };
+// 四角形（縮小画像の座標）の良さ。0〜1くらい
+function quadScore(sc, q){
+  const c = [q.reduce((t, p) => t + p[0], 0) / 4, q.reduce((t, p) => t + p[1], 0) / 4];
+  const sides = [0, 1, 2, 3].map(i => sideStats(sc, q[i], q[(i + 1) % 4], c));
+  const seen = sides.filter(Boolean); if (seen.length < 3) return { score: 0 };
+  const sup = seen.reduce((t, x) => t + x.s, 0) / seen.length;
+  const con = Math.min(1, seen.reduce((t, x) => t + x.c, 0) / seen.length / 70);
+  const weak = Math.min(...seen.map(x => Math.min(x.s / 0.5, x.c / 25)));
+  let spread = 0; for (let i = 0; i < seen.length; i++) for (let j = i + 1; j < seen.length; j++) spread = Math.max(spread, chromaDist(seen[i].outC, seen[j].outC));
+  let area = 0; for (let i = 0; i < 4; i++){ const [x1, y1] = q[i], [x2, y2] = q[(i + 1) % 4]; area += x1 * y2 - x2 * y1; }
+  area = Math.abs(area) / 2 / (sc.w * sc.h);
+  // 形のもっともらしさ：斜めから撮っても角はだいたい 50〜130°
+  let shape = 1;
+  for (let i = 0; i < 4; i++){
+    const p0 = q[(i + 3) % 4], p1 = q[i], p2 = q[(i + 1) % 4];
+    const v1 = [p0[0] - p1[0], p0[1] - p1[1]], v2 = [p2[0] - p1[0], p2[1] - p1[1]];
+    const ang = Math.acos(Math.max(-1, Math.min(1, (v1[0] * v2[0] + v1[1] * v2[1]) / (Math.hypot(...v1) * Math.hypot(...v2) || 1)))) * 180 / Math.PI;
+    if (ang < 50 || ang > 130) shape *= 0.35; else if (ang < 62 || ang > 118) shape *= 0.75;
+  }
+  // 画面の縁にかかる辺：その縁ぎわが机の色なら、紙は本当ははみ出していない（＝間違った四角形）
+  let border = 1;
+  if (seen.length === 3){
+    const i = sides.findIndex(x => !x), a = q[i], b = q[(i + 1) % 4];
+    const desk = [0, 1, 2].map(k => seen.reduce((t, x) => t + x.outC[k], 0) / seen.length);
+    let like = 0, k = 0;
+    for (let j = 3; j <= 57; j++){
+      const x = Math.min(sc.w - 4, Math.max(3, a[0] + (b[0] - a[0]) * j / 60)), y = Math.min(sc.h - 4, Math.max(3, a[1] + (b[1] - a[1]) * j / 60));
+      const v = sc.col(x + (c[0] - x) * 0.05, y + (c[1] - y) * 0.05); if (v){ k++; if (chromaDist(v, desk) < 10) like++; }
+    }
+    border = k && like / k > 0.35 ? 0.3 : 0.92;
+  }
+  const score = (0.55 * sup + 0.45 * con) * Math.min(1, Math.max(0, weak)) ** 0.5 / (1 + spread / 40) * shape * border * (area > 0.08 ? 1 : 0.3);
+  return { score, sup, con, spread, area };
+}
+// 大まかな四隅（0〜1）を、近くにある本当の縁の線に吸い付かせる
+function refineQuad(canvas, cornersN, sc = prepScene(canvas)){
+  const { w, h } = sc;
+  let q = cornersN.map(([x, y]) => [x * (w - 1), y * (h - 1)]);
+  const c = [q.reduce((t, p) => t + p[0], 0) / 4, q.reduce((t, p) => t + p[1], 0) / 4];
+  const lines = [];
+  for (let i = 0; i < 4; i++){
+    const a = q[i], b = q[(i + 1) % 4];
+    const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+    let best = null;
+    const R = Math.min(w, h) * 0.07;
+    for (let dt = -8; dt <= 8; dt += 1){
+      const t = ang + dt * Math.PI / 180, ux = Math.cos(t), uy = Math.sin(t), nx = -uy, ny = ux;
+      const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2, half = Math.hypot(b[0] - a[0], b[1] - a[1]) / 2;
+      for (let dr = -R; dr <= R; dr += 1){
+        const px = mx + nx * dr, py = my + ny * dr;
+        const A = [px - ux * half, py - uy * half], B = [px + ux * half, py + uy * half];
+        const st = sideStats(sc, A, B, c); if (!st) continue;
+        const v = (0.55 * st.s + 0.45 * Math.min(1, st.c / 70)) - Math.abs(dr) / R * 0.08 - Math.abs(dt) / 8 * 0.04;
+        if (st.s >= 0.3 && st.c >= 12 && (!best || v > best.v)) best = { v, p: [px, py], u: [ux, uy] };
+      }
+    }
+    lines.push(best ? { p: best.p, u: best.u } : { p: a, u: [(b[0] - a[0]), (b[1] - a[1])] });
+  }
+  const meet = (L1, L2) => {
+    const d = L1.u[0] * L2.u[1] - L1.u[1] * L2.u[0]; if (Math.abs(d) < 1e-9) return null;
+    const t = ((L2.p[0] - L1.p[0]) * L2.u[1] - (L2.p[1] - L1.p[1]) * L2.u[0]) / d;
+    return [L1.p[0] + L1.u[0] * t, L1.p[1] + L1.u[1] * t];
+  };
+  const out = [meet(lines[3], lines[0]), meet(lines[0], lines[1]), meet(lines[1], lines[2]), meet(lines[2], lines[3])];
+  if (out.some(p => !p)) return cornersN;
+  const res = out.map(([x, y]) => [Math.min(1, Math.max(0, x / (w - 1))), Math.min(1, Math.max(0, y / (h - 1)))]);
+  // 仕上げで大きく崩れたら元のまま
+  return Math.max(...res.map((p, i) => Math.hypot(p[0] - cornersN[i][0], p[1] - cornersN[i][1]))) > 0.12 ? cornersN : res;
+}
+// Claudeに写真を見てもらい、紙・本の四隅のおおよその位置を返してもらう
+async function claudeCorners(canvas){
+  const r = Math.min(1, 1400 / Math.max(canvas.width, canvas.height));
+  const sm = makeCanvas(canvas.width * r, canvas.height * r); sm.getContext('2d').drawImage(canvas, 0, 0, sm.width, sm.height);
+  const blob = await toBlob(sm, .85); freeCanvas(sm);
+  const raw = await claudeCall(`この写真には、スキャンしたい紙・プリント・本のページ（または表紙）が写っています。その「紙（本）の外形」の四隅の位置を答えてください。
+- 座標は写真の左上を(0,0)、右下を(1000,1000)とした整数。
+- 順番は、写真の見た目で 左上、右上、右下、左下。
+- 紙が写真の外にはみ出している角は、はみ出した先の推定位置（0未満や1000超も可）で答える。
+- 紙の中の枠や模様ではなく、紙そのものの一番外側の縁を答える。机・影・他の物は含めない。
+- 紙が見当たらなければ {"found": false}。
+返事は次の形のJSONだけ: {"found": true, "corners": [[x,y],[x,y],[x,y],[x,y]]}`, [blob], { tier: 'quick', maxTokens: 300 });
+  let ans = null; try{ ans = JSON.parse(raw.text.slice(raw.text.indexOf('{'), raw.text.lastIndexOf('}') + 1)); }catch{}
+
+  if (!ans || !ans.found || !Array.isArray(ans.corners) || ans.corners.length !== 4) return null;
+  const q = ans.corners.map(p => [Math.min(1, Math.max(0, Number(p[0]) / 1000)), Math.min(1, Math.max(0, Number(p[1]) / 1000))]);
+  return q.some(p => p.some(v => !isFinite(v))) ? null : q;
+}
+
+// 候補（色の塊／輪郭の直線）を本当の縁に吸い付かせ、いちばん点数の高いものを使う。
+// 戻り値の confidence が低ければ、呼び出し側で Claude に位置を聞く
+function detectPage(canvas){
+  let sc; try{ sc = prepScene(canvas); }catch(e){ return null; }
+  const cands = [];
+  try{ const r = detectByRegion(canvas); if (r) cands.push({ ...r, kind: 'region' }); }catch(e){ console.warn('region', e); }
+  try{ const e = detectByEdges(canvas); if (e) cands.push({ corners: e.corners, mids: null, profile: null, kind: 'edges' }); }catch(e){ console.warn('edges', e); }
+  let best = null;
+  for (const c of cands){ // そのままの形と、縁に吸い付かせた形の両方を採点
+    const refined = refineQuad(canvas, c.corners, sc);
+    const moved = Math.max(...refined.map((p, i) => Math.hypot(p[0] - c.corners[i][0], p[1] - c.corners[i][1])));
+    for (const cand of moved > 0.004 ? [c, { corners: refined, mids: null, profile: null, kind: c.kind + '+snap' }] : [c]){
+      const q = quadScore(sc, cand.corners.map(([x, y]) => [x * (sc.w - 1), y * (sc.h - 1)]));
+      if (!best || q.score > best.confidence) best = { ...cand, confidence: q.score };
+    }
+  }
+  return best;
+}
+// 取り込み時に使う：自前の検出で自信がないときだけ Claude に聞いて、仕上げに縁へ吸い付かせる
+async function findPage(canvas, { allowClaude = true } = {}){
+  const local = detectPage(canvas);
+  if (local && local.confidence >= 0.42) return local;
+  if (!allowClaude || !lib().settings.apiKey) return local && local.confidence >= 0.25 ? local : null;
+  try{
+    toast('Claudeに紙の位置を探してもらっています…');
+    const rough = await claudeCorners(canvas);
+    if (rough){
+      const sc = prepScene(canvas), refined = refineQuad(canvas, rough, sc);
+      const q = quadScore(sc, refined.map(([x, y]) => [x * (sc.w - 1), y * (sc.h - 1)]));
+      if (!local || q.score >= local.confidence * 0.9) return { corners: refined, mids: null, profile: null, confidence: q.score, kind: 'claude' };
+    }
+  }catch(e){ console.warn('claude corners', e); }
+  return local && local.confidence >= 0.25 ? local : null;
+}
+const FULL = [[0,0],[1,0],[1,1],[0,1]];
+const straightMids = q => [[(q[0][0] + q[1][0]) / 2, (q[0][1] + q[1][1]) / 2], [(q[3][0] + q[2][0]) / 2, (q[3][1] + q[2][1]) / 2]];
+
+function solve(A, b){ // ガウスの消去法
+  const n = b.length;
+  for (let i = 0; i < n; i++){
+    let m = i; for (let k = i+1; k < n; k++) if (Math.abs(A[k][i]) > Math.abs(A[m][i])) m = k;
+    [A[i], A[m]] = [A[m], A[i]]; [b[i], b[m]] = [b[m], b[i]];
+    for (let k = i+1; k < n; k++){ const f = A[k][i] / A[i][i]; for (let j = i; j < n; j++) A[k][j] -= f * A[i][j]; b[k] -= f * b[i]; }
+  }
+  const x = new Array(n);
+  for (let i = n-1; i >= 0; i--){ let s = b[i]; for (let j = i+1; j < n; j++) s -= A[i][j] * x[j]; x[i] = s / A[i][i]; }
+  return x;
+}
+function homography(from, to){ // from[i] → to[i]
+  const A = [], b = [];
+  for (let i = 0; i < 4; i++){
+    const [u, v] = from[i], [x, y] = to[i];
+    A.push([u, v, 1, 0, 0, 0, -u*x, -v*x]); b.push(x);
+    A.push([0, 0, 0, u, v, 1, -u*y, -v*y]); b.push(y);
+  }
+  return solve(A, b);
+}
+// 遠近を考えた紙の本当の縦横比（幅/高さ）。Zhang & He の方法
+function trueAspect(q, W, H){
+  const [tl, tr, br, bl] = q, u0 = W/2, v0 = H/2;
+  const P = p => [p[0], p[1], 1];
+  const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+  const dot = (a, b) => a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+  const m1 = P(tl), m2 = P(tr), m3 = P(bl), m4 = P(br);
+  const k2 = dot(cross(m1, m4), m3) / dot(cross(m2, m4), m3);
+  const k3 = dot(cross(m1, m4), m2) / dot(cross(m3, m4), m2);
+  const n2 = m2.map((v, i) => k2*v - m1[i]), n3 = m3.map((v, i) => k3*v - m1[i]);
+  if (Math.abs(n2[2]) < 1e-6 || Math.abs(n3[2]) < 1e-6) return null;
+  const f2 = -((n2[0]*n3[0] - (n2[0]*n3[2] + n2[2]*n3[0])*u0 + n2[2]*n3[2]*u0*u0)
+             + (n2[1]*n3[1] - (n2[1]*n3[2] + n2[2]*n3[1])*v0 + n2[2]*n3[2]*v0*v0)) / (n2[2]*n3[2]);
+  if (!isFinite(f2) || f2 <= 0) return null;
+  const f = Math.sqrt(f2);
+  const q2 = n => { const a = (n[0] - u0*n[2]) / f, b = (n[1] - v0*n[2]) / f; return a*a + b*b + n[2]*n[2]; };
+  const r = Math.sqrt(q2(n2) / q2(n3));
+  return r > 0.2 && r < 5 ? r : null;
+}
+function warp(src, cornersN, midsN, profileN, targetPixels = 2400000){
+  const W = src.width, H = src.height, S = ([x, y]) => [x * (W - 1), y * (H - 1)];
+  const q = cornersN.map(S);
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  let w = Math.max(dist(q[0], q[1]), dist(q[3], q[2])), h = Math.max(dist(q[0], q[3]), dist(q[1], q[2]));
+  let ratio = trueAspect(q, W, H), tol = 0.06;
+  if (!ratio){ ratio = w / h; tol = 0.08; }
+  for (const t of [1 / Math.SQRT2, Math.SQRT2]) if (Math.abs(ratio - t) / t < tol) ratio = t; // A判・B判
+  const area = Math.min(targetPixels, w * h * 1.3);
+  h = Math.sqrt(area / ratio); w = h * ratio;
+  const ow = Math.round(w), oh = Math.round(h);
+  const Hm = homography([[0, 0], [ow - 1, 0], [ow - 1, oh - 1], [0, oh - 1]], q);
+  const map = (x, y) => { const den = Hm[6] * x + Hm[7] * y + 1; return [(Hm[0] * x + Hm[1] * y + Hm[2]) / den, (Hm[3] * x + Hm[4] * y + Hm[5]) / den]; };
+  // 上下の縁の曲がりを、列ごとのずれとして用意
+  const offT = new Float32Array(ow * 2), offB = new Float32Array(ow * 2);
+  if (profileN){
+    const prof = profileN.map(e => e.map(S));
+    const yAt = (pts, x) => { // 縁の点列から x の位置の y を線形補間
+      if (x <= pts[0][0]) return pts[0][1]; if (x >= pts[pts.length - 1][0]) return pts[pts.length - 1][1];
+      for (let i = 1; i < pts.length; i++) if (x <= pts[i][0]){ const t = (x - pts[i-1][0]) / (pts[i][0] - pts[i-1][0] || 1); return pts[i-1][1] + (pts[i][1] - pts[i-1][1]) * t; }
+      return pts[pts.length - 1][1];
+    };
+    const lineY = (a, b, x) => a[1] + (b[1] - a[1]) * ((x - a[0]) / ((b[0] - a[0]) || 1));
+    for (let x = 0; x < ow; x++){
+      const [tx, ty] = map(x, 0), [bx, by] = map(x, oh - 1);
+      offT[x * 2 + 1] = yAt(prof[0], tx) - lineY(prof[0][0], prof[0][prof[0].length - 1], tx);
+      offB[x * 2 + 1] = yAt(prof[1], bx) - lineY(prof[1][0], prof[1][prof[1].length - 1], bx);
+    }
+  } else if (midsN){
+    const m = midsN.map(S), sm = straightMids(q);
+    const dT = [m[0][0] - sm[0][0], m[0][1] - sm[0][1]], dB = [m[1][0] - sm[1][0], m[1][1] - sm[1][1]];
+    for (let x = 0; x < ow; x++){ const u = x / (ow - 1), k = 4 * u * (1 - u);
+      offT[x * 2] = k * dT[0]; offT[x * 2 + 1] = k * dT[1]; offB[x * 2] = k * dB[0]; offB[x * 2 + 1] = k * dB[1]; }
+  }
+  const sd = src.getContext('2d').getImageData(0, 0, W, H).data;
+  const out = makeCanvas(ow, oh), octx = out.getContext('2d');
+  const od = octx.createImageData(ow, oh), o = od.data;
+  for (let y = 0, k = 0; y < oh; y++){
+    const v = y / (oh - 1);
+    for (let x = 0; x < ow; x++, k += 4){
+      const den = Hm[6] * x + Hm[7] * y + 1;
+      let sx = (Hm[0] * x + Hm[1] * y + Hm[2]) / den + (1 - v) * offT[x * 2] + v * offB[x * 2];
+      let sy = (Hm[3] * x + Hm[4] * y + Hm[5]) / den + (1 - v) * offT[x * 2 + 1] + v * offB[x * 2 + 1];
+      if (sx < 0) sx = 0; if (sy < 0) sy = 0; if (sx > W - 1.001) sx = W - 1.001; if (sy > H - 1.001) sy = H - 1.001;
+      const x0 = sx | 0, y0 = sy | 0, fx = sx - x0, fy = sy - y0;
+      const i00 = (y0 * W + x0) * 4, i10 = i00 + 4, i01 = i00 + W * 4, i11 = i01 + 4;
+      for (let c = 0; c < 3; c++){
+        const a = sd[i00 + c] + (sd[i10 + c] - sd[i00 + c]) * fx, bb = sd[i01 + c] + (sd[i11 + c] - sd[i01 + c]) * fx;
+        o[k + c] = a + (bb - a) * fy;
+      }
+      o[k + 3] = 255;
+    }
+  }
+  octx.putImageData(od, 0, 0);
+  return out;
+}
+function rotate(c, deg){
+  deg = ((deg % 360) + 360) % 360; if (!deg) return c;
+  const sw = deg % 180 !== 0, out = makeCanvas(sw ? c.height : c.width, sw ? c.width : c.height);
+  const ctx = out.getContext('2d'); ctx.translate(out.width/2, out.height/2); ctx.rotate(deg * Math.PI / 180);
+  ctx.drawImage(c, -c.width/2, -c.height/2); return out;
+}
+// ---- 影・ムラ除去 ----
+// 縮小画像で「紙の明るさ」を推定（最大値フィルタ→最小値フィルタ＝閉じる処理で文字を消す→ぼかし）し、
+// 元の画像をそれで割って紙を真っ白にする。文字の濃さは画像ごとに自動で調整する。
+function rangeFilter(a, w, h, r, isMax){
+  const tmp = new Float32Array(a.length), out = new Float32Array(a.length), dq = new Int32Array(Math.max(w, h));
+  const pass = (src, dst, len, count, stride, step) => {
+    for (let line = 0; line < count; line++){
+      const base = line * stride;
+      let head = 0, tail = 0;
+      for (let i = 0; i < len + r; i++){
+        if (i < len){
+          const v = src[base + i * step];
+          while (tail > head && (isMax ? src[base + dq[tail - 1] * step] <= v : src[base + dq[tail - 1] * step] >= v)) tail--;
+          dq[tail++] = i;
+        }
+        const j = i - r;
+        if (j >= 0){
+          while (dq[head] < j - r) head++;
+          dst[base + j * step] = src[base + dq[head] * step];
+        }
+      }
+    }
+  };
+  pass(a, tmp, w, h, w, 1);     // 横方向
+  pass(tmp, out, h, w, 1, w);   // 縦方向
+  return out;
+}
+function boxBlur(a, w, h, r){
+  const tmp = new Float32Array(a.length), out = new Float32Array(a.length);
+  for (let y = 0; y < h; y++){
+    let s = 0, n = 0; const row = y * w;
+    for (let x = -r; x < w + r; x++){
+      if (x + r < w && x + r >= 0){ s += a[row + x + r]; n++; }
+      if (x - r - 1 >= 0){ s -= a[row + x - r - 1]; n--; }
+      if (x >= 0 && x < w) tmp[row + x] = s / n;
+    }
+  }
+  for (let x = 0; x < w; x++){
+    let s = 0, n = 0;
+    for (let y = -r; y < h + r; y++){
+      if (y + r < h && y + r >= 0){ s += tmp[(y + r) * w + x]; n++; }
+      if (y - r - 1 >= 0){ s -= tmp[(y - r - 1) * w + x]; n--; }
+      if (y >= 0 && y < h) out[y * w + x] = s / n;
+    }
+  }
+  return out;
+}
+function enhance(c, mode){
+  if (mode === 'color') return c;
+  const w = c.width, h = c.height, ctx = c.getContext('2d');
+  const id = ctx.getImageData(0, 0, w, h), d = id.data;
+  // 1) 縮小して背景（紙）の明るさを推定
+  const f = 4, sw = Math.ceil(w / f), sh = Math.ceil(h / f);
+  const R = Math.max(3, Math.round(Math.min(sw, sh) / 32));
+  const bgs = [0, 1, 2].map(ch => {
+    const a = new Float32Array(sw * sh);
+    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++){
+      let m = 0;
+      for (let yy = y * f; yy < Math.min(h, y * f + f); yy++) for (let xx = x * f; xx < Math.min(w, x * f + f); xx++){
+        const v = d[(yy * w + xx) * 4 + ch]; if (v > m) m = v;
+      }
+      a[y * sw + x] = m;
+    }
+    let b = rangeFilter(a, sw, sh, R, true);      // 文字を消す
+    b = rangeFilter(b, sw, sh, R, false);          // 影の境目を元の位置に戻す
+    b = boxBlur(b, sw, sh, Math.max(2, R >> 1));
+    for (let i = 0; i < b.length; i++) if (b[i] < 30) b[i] = 30;
+    return b;
+  });
+  // 2) 割り算して比率に（紙＝1）
+  const hist = new Uint32Array(256); // 比率×200 を画像の中にそのまま書き戻す（iPhoneでメモリを節約）
+  for (let y = 0; y < h; y++){
+    let gy = (y + .5) / f - .5; if (gy < 0) gy = 0; if (gy > sh - 1) gy = sh - 1;
+    const y0 = gy | 0, y1 = Math.min(sh - 1, y0 + 1), fy = gy - y0;
+    for (let x = 0; x < w; x++){
+      let gx = (x + .5) / f - .5; if (gx < 0) gx = 0; if (gx > sw - 1) gx = sw - 1;
+      const x0 = gx | 0, x1 = Math.min(sw - 1, x0 + 1), fx = gx - x0, k = (y * w + x) * 4;
+      let lum = 0;
+      for (let ch = 0; ch < 3; ch++){
+        const b = bgs[ch];
+        const t = b[y0 * sw + x0] + (b[y0 * sw + x1] - b[y0 * sw + x0]) * fx;
+        const u = b[y1 * sw + x0] + (b[y1 * sw + x1] - b[y1 * sw + x0]) * fx;
+        const v = d[k + ch] / (t + (u - t) * fy);
+        d[k + ch] = v * 200; lum += v * (ch === 0 ? .299 : ch === 1 ? .587 : .114);
+      }
+      hist[Math.min(255, Math.round(lum * 200))]++;
+    }
+  }
+  // 3) 文字の黒さを画像ごとに決める（暗い方から0.6%の位置を真っ黒に）
+  let acc = 0, black = 0; const target = w * h * 0.006;
+  for (let i = 0; i < 256; i++){ acc += hist[i]; if (acc >= target){ black = i / 200; break; } }
+  black = Math.min(0.55, black);
+  const white = mode === 'bw' ? 0.84 : 0.88, gamma = mode === 'bw' ? 1.6 : 1.3;
+  const span = Math.max(0.1, white - black);
+  for (let i = 0, k = 0; i < w * h; i++, k += 4){
+    const r0 = d[k] / 200, r1 = d[k + 1] / 200, r2 = d[k + 2] / 200;
+    if (mode === 'bw'){
+      const g = r0 * .299 + r1 * .587 + r2 * .114;
+      let t = (g - black) / span; t = t < 0 ? 0 : t > 1 ? 1 : t;
+      d[k] = d[k + 1] = d[k + 2] = 255 * Math.pow(t, gamma);
+    } else {
+      // 色は残しつつ、ほぼ紙の色のところは真っ白に
+      const g = r0 * .299 + r1 * .587 + r2 * .114;
+      let t = (g - black) / span; t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const outL = Math.pow(t, gamma), sc = g > 0.02 ? outL / g : 0;
+      const rr = [r0, r1, r2];
+      for (let ch = 0; ch < 3; ch++){
+        const v = rr[ch] * sc; d[k + ch] = v >= 1 ? 255 : v <= 0 ? 0 : v * 255;
+      }
+    }
+  }
+  ctx.putImageData(id, 0, 0);
+  return c;
+}
+async function renderPage(p, origCanvas){
+  const src = origCanvas || await assetCanvas(p.orig);
+  try{ return renderFrom(src, p); } finally { if (!origCanvas) freeCanvas(src); }
+}
+function renderFrom(src, p){
+  const isFull = JSON.stringify(p.corners) === JSON.stringify(FULL) && !p.mids && !p.profile;
+  let c;
+  if (isFull){ // 補正なし：大きすぎれば縮めるだけ
+    const r = Math.min(1, Math.sqrt(2400000 / (src.width * src.height)));
+    c = makeCanvas(src.width * r, src.height * r); c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  } else c = warp(src, p.corners, p.mids, p.profile);
+  const r = rotate(c, p.rotate || 0); if (r !== c) freeCanvas(c);
+  return enhance(r, p.filter || 'scan');
+}
+
+/* ---------- PDFの読み込み（pdf.js を必要なときだけ取得） ---------- */
+const PDFJS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/legacy/build/';
+let pdfjsReady = null;
+function loadPdfJs(){
+  if (!pdfjsReady) pdfjsReady = import(PDFJS + 'pdf.min.mjs').then(lib => {
+    lib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.mjs';
+    return lib;
+  }).catch(e => { pdfjsReady = null; throw new Error('PDFを開く部品を読み込めませんでした（通信を確認）'); });
+  return pdfjsReady;
+}
+const isPdf = f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '');
+async function pdfPages(file, onPage){
+  const lib = await loadPdfJs();
+  const doc = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
+  try{
+    for (let i = 1; i <= doc.numPages; i++){
+      const page = await doc.getPage(i), v1 = page.getViewport({ scale: 1 });
+      const vp = page.getViewport({ scale: Math.min(4, Math.sqrt(2200000 / (v1.width * v1.height))) });
+      const c = makeCanvas(vp.width, vp.height), ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: ctx, canvas: c, viewport: vp }).promise;
+      page.cleanup?.();
+      await onPage(c, i, doc.numPages);
+    }
+  } finally { doc.destroy?.(); }
+}
+
+/* ---------------------------------------------------------------------
+   OCR結果のチェック（怪しいページを見つける）
+   --------------------------------------------------------------------- */
+const MATH_RE = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|(?<![\\$])\$(?!\$)([\s\S]+?)(?<!\\)\$/g;
+function checkMd(md, truncated){
+  const issues = [], t = md || '';
+  if (t.trim().length < 5) return ['ほとんど何も読めていません'];
+  if (truncated) issues.push('長すぎて途中で切れました');
+  const lines = t.split('\n').map(s => s.trim()).filter(s => s.length >= 6);
+  const cnt = {}; let top = 0; for (const l of lines){ cnt[l] = (cnt[l] || 0) + 1; top = Math.max(top, cnt[l]); }
+  if (top >= 4 && top >= lines.length * .25) issues.push(`同じ行が${top}回繰り返されています`);
+  let bad = 0;
+  for (const m of t.matchAll(MATH_RE)){
+    const body = (m[1] ?? m[2] ?? m[3] ?? m[4]).replace(/\\[{}]/g, '');
+    let dep = 0, ok = true; for (const ch of body){ if (ch === '{') dep++; else if (ch === '}' && --dep < 0){ ok = false; break; } }
+    if (!ok || dep) bad++;
+    else if ((body.match(/\\left\b/g) || []).length !== (body.match(/\\right\b/g) || []).length) bad++;
+    else if ((body.match(/\\begin\{/g) || []).length !== (body.match(/\\end\{/g) || []).length) bad++;
+  }
+  if (bad) issues.push(`数式の書き方がおかしい箇所が${bad}個`);
+  if ((t.replace(MATH_RE, '').replace(/\\\$/g, '').match(/\$/g) || []).length % 2) issues.push('$ の数が合いません');
+  return issues;
+}
+
+/* ---------------------------------------------------------------------
+   Claudeで文字起こし・見直し
+   --------------------------------------------------------------------- */
+const RULES = `出力形式:
+- 本文は Markdown。見出しは #、箇条書きは - 。改行はページの見た目どおりに。
+- 数式があればすべて LaTeX。数式のない普通の文章はそのまま文字で。文中は $...$、別行立ては $$...$$。分数は \\frac、ベクトルは \\overrightarrow{AB} や \\vec{a}、場合分けは \\begin{cases} など標準的な書き方で。
+- 表は HTML の <table><tr><td>…</td></tr></table>（結合セルは colspan / rowspan）。
+- 図・グラフ・写真は文字にせず、位置だけ <bbox>[(x1, y1), (x2, y2)]</bbox> で示す。座標はページ全体の左上を(0,0)、右下を(1000,1000)とした整数。
+- 縦書きの文章は、読む順に横書きのテキストとして書く。
+- 画像に書かれていないことは書かない。解答・説明・感想は一切書かない。
+- 結果全体を <result> と </result> で囲む。`;
+const HALVES = `画像は同じ1ページを上下に分けたもので、1枚目が上半分（ページ全体の縦0〜550の範囲）、2枚目が下半分（縦450〜1000の範囲）です。中央付近が重なっているので、重なった行を二重に書かないでください。`;
+const ROLE = 'あなたは日本語の文書を正確に書き起こす専門家です。文書は本・プリント・配布資料・入試問題・手書きのメモなどで、数式や表を含むこともあります。';
+function promptRead(n){ return `${ROLE}\n${n > 1 ? HALVES : '画像は1ページ分です。'}\nページの内容をすべて正確に書き起こしてください。\n\n${RULES}`; }
+function promptFix(n, draft, issues){
+  return `${ROLE}\n${n > 1 ? HALVES : '画像は1ページ分です。'}\n下書き（前回の書き起こし）を画像と1行ずつ照合し、誤り（誤字、数式の読み違い、抜け、繰り返し、崩れた表など）だけを直してください。正しい部分は変えないこと。\n${issues.length ? '自動チェックで見つかった問題: ' + issues.join('、') + '\n' : ''}\n${RULES}\n\n<draft>\n${draft}\n</draft>`;
+}
+/* ---------------------------------------------------------------------
+   文字の読み取り：オフライン（Tesseract）と Claude（Anthropic API）
+   --------------------------------------------------------------------- */
+const MODELS = { default: 'claude-sonnet-5-5', complex: 'claude-opus-5-5', quick: 'claude-haiku-5-5' };
+const b64 = blob => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
+// Claude に画像と指示を送る。onText で途中経過（ストリーミング）
+async function claudeCall(prompt, blobs, { tier = 'default', signal, onText, maxTokens = 12000 } = {}){
+  const key = lib().settings.apiKey;
+  if (!key) throw { code: 'no_key' };
+  const content = [];
+  for (const b of blobs) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: await b64(b) } });
+  content.push({ type: 'text', text: prompt });
+  let r;
+  try{
+    r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', signal,
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: MODELS[tier] || MODELS.default, max_tokens: maxTokens, stream: true, messages: [{ role: 'user', content }] }),
+    });
+  }catch(e){ if (e?.name === 'AbortError') throw { code: 'cancelled' }; throw { code: 'network', message: String(e) }; }
+  if (!r.ok){ let m = ''; try{ m = (await r.json()).error?.message || ''; }catch{} throw { code: 'http_' + r.status, message: m }; }
+  // ストリーミング（Server-Sent Events）を読む
+  const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '', text = '', stop = '';
+  try{
+    for (;;){
+      const { value, done } = await rd.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i; while ((i = buf.indexOf('\n\n')) >= 0){
+        const ev = buf.slice(0, i); buf = buf.slice(i + 2);
+        const line = ev.split('\n').find(l => l.startsWith('data:')); if (!line) continue;
+        let d; try{ d = JSON.parse(line.slice(5)); }catch{ continue; }
+        if (d.type === 'content_block_delta' && d.delta?.type === 'text_delta'){ text += d.delta.text; onText?.({ text }); }
+        if (d.type === 'message_delta') stop = d.delta?.stop_reason || stop;
+        if (d.type === 'error') throw { code: 'api_' + (d.error?.type || 'error'), message: d.error?.message };
+      }
+    }
+  }catch(e){ if (e?.name === 'AbortError') throw { code: 'cancelled', text }; throw e; }
+  if (!text.trim()) throw { code: 'empty_completion' };
+  return { text, truncated: stop === 'max_tokens' };
+}
+async function pageImagesForClaude(canvas){
+  if (canvas.height > canvas.width * 1.15){ // 縦長は上下に分けて送ると細かい字まで読める
+    const h = canvas.height, w = canvas.width, cut = (a, b) => {
+      const c = makeCanvas(w, (b - a) * h); c.getContext('2d').drawImage(canvas, 0, a * h, w, (b - a) * h, 0, 0, w, c.height); return toBlob(c, .9).finally(() => freeCanvas(c));
+    };
+    return Promise.all([cut(0, .55), cut(.45, 1)]);
+  }
+  const r = Math.min(1, 2200 / Math.max(canvas.width, canvas.height));
+  const c = makeCanvas(canvas.width * r, canvas.height * r); c.getContext('2d').drawImage(canvas, 0, 0, c.width, c.height);
+  try{ return [await toBlob(c, .9)]; } finally { freeCanvas(c); }
+}
+// --- オフライン：Tesseract.js（日本語＋英語）。初回だけ部品（約20MB）を取得し、以後はiPhoneの中で動く
+let tessWorker = null, tessLoading = null;
+function loadScript(src){ return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('部品を読み込めません（通信を確認）')); document.head.appendChild(s); }); }
+async function getTesseract(onProgress){
+  if (tessWorker) return tessWorker;
+  if (!tessLoading) tessLoading = (async () => {
+    if (!window.Tesseract) await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js');
+    const w = await Tesseract.createWorker(['jpn', 'eng'], 1, { logger: m => onProgress?.(m) });
+    await w.setParameters({ preserve_interword_spaces: '1' });
+    return (tessWorker = w);
+  })().catch(e => { tessLoading = null; throw e; });
+  return tessLoading;
+}
+async function offlineRead(canvas, onProgress){
+  const w = await getTesseract(m => { if (m.status && m.progress != null) onProgress?.(`オフライン読み取りの準備中… ${Math.round(m.progress * 100)}%`); });
+  const r = Math.min(1, 2600 / Math.max(canvas.width, canvas.height));
+  const c = makeCanvas(canvas.width * r, canvas.height * r); c.getContext('2d').drawImage(canvas, 0, 0, c.width, c.height);
+  onProgress?.('オフラインで読み取り中…');
+  try{
+    const { data } = await w.recognize(c);
+    // 日本語の文字の間に入る余計な空白を取る
+    const text = (data.text || '').split('\n').map(l => l.replace(/(?<=[^\x00-\x7F])\s+(?=[^\x00-\x7F])/g, '').trimEnd()).join('\n').replace(/\n{3,}/g, '\n\n');
+    return { text, conf: data.confidence ?? 0 };
+  } finally { freeCanvas(c); }
+}
+// 数式が含まれていそうか（オフライン結果を Claude に回すかどうかの目安）
+function looksMathy(t){
+  const s = t.replace(/\s/g, ''); if (!s) return false;
+  const sym = (s.match(/[=+\-−×÷^√∫∑∏πθαβγΔ≦≧≤≥<>≠±∞→|\/]/g) || []).length;
+  const pat = /([a-zA-Z]\s?[\^²³]|f\(x\)|log|lim|sin|cos|tan|dx|\d\s?\/\s?\d|[a-z]\d)/.test(t);
+  return sym / s.length > 0.03 || pat;
+}
+const ERR = {
+  no_key: 'ClaudeのAPIキーが設定されていません', network: 'ネットにつながりません', cancelled: '中止しました',
+  http_401: 'APIキーが正しくありません', http_403: 'このAPIキーでは使えません', http_429: '利用の上限に達しました。少し待ってから試してください',
+  http_529: 'Claudeが混み合っています。少し待ってから試してください', http_400: 'Claudeに送った内容に問題がありました', empty_completion: '何も読み取れませんでした',
+};
+const HINT = {
+  no_key: '「設定」でAPIキーを入れるか、読み取り方法を「オフラインだけ」にしてください。',
+  network: 'オフラインでは「オフラインだけ」の読み取りが使えます（初回は部品の取得に通信が必要）。',
+  http_401: 'console.anthropic.com で発行したキーを、もう一度「設定」に貼り付けてください。',
+};
+const errText = e => ERR[e?.code] || (e?.message ? `読み取りに失敗しました：${e.message}` : '読み取りに失敗しました' + (e?.code ? `（${e.code}）` : ''));
+const pickResult = t => { const m = t.match(/<result>\s*([\s\S]*?)\s*(?:<\/result>|$)/); return (m ? m[1] : t).trim() + '\n'; };
+
+/* ---------------------------------------------------------------------
+   Markdown → LaTeX（PC版 TeX OCR と同じ規則）
+   --------------------------------------------------------------------- */
+const PREAMBLE = String.raw`\documentclass[a4paper,11pt]{ltjsarticle}
+\usepackage[margin=20mm]{geometry}
+\usepackage{amsmath,amssymb,mathtools,bm}
+\usepackage{graphicx}
+\usepackage{multirow}
+\usepackage{array}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.4\baselineskip}
+`;
+const BBOX_RE = /<bbox>\s*\[?\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*,\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*\]?\s*<\/bbox>/g;
+const unhtml = s => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+function escTex(s){
+  s = unhtml(s).replace(/<br\s*\/?>/gi, '\n').replace(/<\/?(?:span|div|p|sup|sub|b|i|u|em|strong)\b[^>]*>/gi, '');
+  return s.replace(/[&%#_~^]/g, c => ({'&':'\\&','%':'\\%','#':'\\#','_':'\\_','~':'\\textasciitilde{}','^':'\\textasciicircum{}'}[c]));
+}
+function inlineMd(s){
+  const codes = []; s = s.replace(/`([^`]+)`/g, (_, c) => `\u0001${codes.push(c) - 1}\u0001`);
+  s = escTex(s).replace(/\*\*(.+?)\*\*/g, '\\textbf{$1}').replace(/!\[[^\]]*\]\([^)]*\)/g, '');
+  return s.replace(/\u0001(\d+)\u0001/g, (_, i) => '\\texttt{' + escTex(codes[+i]) + '}');
+}
+function protectMath(t, store){
+  return t.replace(MATH_RE, m => { m = unhtml(m); if (m.startsWith('$$')) m = '\\[' + m.slice(2, -2).trim() + '\\]'; return `\u0000M${store.push(m) - 1}\u0000`; });
+}
+function cellTex(t){ const st = []; t = protectMath(t.replace(/\n/g, ' '), st); return inlineMd(t).replace(/\u0000M(\d+)\u0000/g, (_, i) => st[+i]); }
+function tableTex(html){
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const rows = [...doc.querySelectorAll('tr')].map(tr => [...tr.querySelectorAll('td,th')].map(c => ({
+    t: c.textContent.trim(), cs: +c.getAttribute('colspan') || 1, rs: +c.getAttribute('rowspan') || 1, th: c.tagName === 'TH' })));
+  if (!rows.length) return '';
+  const grid = new Map(), starts = new Map(); let id = 0;
+  rows.forEach((row, r) => { let c = 0; for (const cell of row){ while (grid.has(r+','+c)) c++; starts.set(r+','+c, cell);
+    for (let a = 0; a < cell.rs; a++) for (let b = 0; b < cell.cs; b++) grid.set((r+a)+','+(c+b), [id, cell]); id++; c += cell.cs; } });
+  let nr = 0, nc = 0; for (const k of grid.keys()){ const [r, c] = k.split(',').map(Number); nr = Math.max(nr, r+1); nc = Math.max(nc, c+1); }
+  const L = ['\\begin{center}', '\\begin{tabular}{|' + 'c|'.repeat(nc) + '}', '\\hline'];
+  for (let r = 0; r < nr; r++){
+    const cells = []; let c = 0;
+    while (c < nc){
+      const st = starts.get(r+','+c);
+      if (st){ let t = cellTex(st.t); if (st.th && t) t = `\\textbf{${t}}`;
+        if (st.rs > 1) t = `\\multirow{${st.rs}}{*}{${t}}`;
+        if (st.cs > 1) t = `\\multicolumn{${st.cs}}{${c ? '' : '|'}c|}{${t}}`;
+        cells.push(t); c += st.cs; }
+      else if (grid.has(r+','+c)){ const cs = grid.get(r+','+c)[1].cs; cells.push(cs > 1 ? `\\multicolumn{${cs}}{${c ? '' : '|'}c|}{}` : ''); c += cs; }
+      else { cells.push(''); c++; }
+    }
+    L.push(cells.join(' & ') + ' \\\\');
+    if (r === nr - 1){ L.push('\\hline'); continue; }
+    const segs = []; let s0 = null;
+    for (let c2 = 0; c2 <= nc; c2++){
+      const a = grid.get(r+','+c2), b = grid.get((r+1)+','+c2), cont = c2 < nc && a && b && a[0] === b[0];
+      if (c2 < nc && !cont){ if (s0 === null) s0 = c2; } else { if (s0 !== null) segs.push([s0, c2-1]); s0 = null; }
+    }
+    L.push(segs.length === 1 && segs[0][0] === 0 && segs[0][1] === nc-1 ? '\\hline' : segs.map(([a, b]) => `\\cline{${a+1}-${b+1}}`).join(' '));
+  }
+  L.push('\\end{tabular}', '\\end{center}');
+  return L.join('\n');
+}
+// 戻り値 {tex, figs:[{name, box}]}
+function mdToTex(md, prefix){
+  const store = [], figs = [];
+  const keep = s => `\u0000B${store.push(s) - 1}\u0000`;
+  let t = (md || '').replace(/\r\n/g, '\n');
+  t = t.replace(BBOX_RE, (_, a, b, c, d) => {
+    const box = [+a, +b, +c, +d]; if (box[2] <= box[0] || box[3] <= box[1]) return '';
+    const name = `${prefix}_${figs.length + 1}.jpg`; figs.push({ name, box });
+    const wd = Math.min(1, Math.max(.15, (box[2] - box[0]) / 1000 * 1.15)).toFixed(2);
+    return '\n\n' + keep(`\\begin{center}\n\\includegraphics[width=${wd}\\linewidth]{figs/${name}}\n\\end{center}`) + '\n\n';
+  });
+  t = t.replace(/<table\b[\s\S]*?<\/table>/gi, m => '\n\n' + keep(tableTex(m)) + '\n\n');
+  t = protectMath(t, store);
+  const out = []; let inList = false;
+  for (const raw of t.split('\n')){
+    const s = raw.trim(), item = raw.match(/^\s*[-*+・]\s+(.*)$/);
+    if (item && !s.startsWith('\u0000')){ if (!inList){ out.push('\\begin{itemize}'); inList = true; } out.push('  \\item ' + inlineMd(item[1])); continue; }
+    if (inList){ out.push('\\end{itemize}'); inList = false; }
+    if (!s){ out.push(''); continue; }
+    const hm = s.match(/^(#{1,6})\s+(.*)$/);
+    if (hm){ out.push(`\\${['', 'section', 'subsection'][hm[1].length] || 'subsubsection'}*{${inlineMd(hm[2])}}`, ''); continue; }
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(s)){ out.push('\\noindent\\rule{\\linewidth}{0.4pt}', ''); continue; }
+    out.push(inlineMd(s), '');
+  }
+  if (inList) out.push('\\end{itemize}');
+  let body = out.join('\n');
+  for (let i = 0; i < 3; i++) body = body.replace(/\u0000[BM](\d+)\u0000/g, (_, k) => store[+k]);
+  return { tex: body.replace(/\n{3,}/g, '\n\n').trim() + '\n', figs };
+}
+function buildTexDoc(pages){
+  const parts = [PREAMBLE, '\\begin{document}', ''];
+  pages.forEach(p => { if (p.tex?.trim()){ parts.push(`% ===== p.${p.n} =====`, p.tex.trim(), ''); } });
+  parts.push('\\end{document}');
+  return parts.join('\n') + '\n';
+}
+
+/* ---------------------------------------------------------------------
+   LaTeX本文 → 画面表示（MathJaxで数式を描く）
+   --------------------------------------------------------------------- */
+function texToHtml(tex){
+  const keep = []; const hold = s => `\u0000${keep.push(s) - 1}\u0000`;
+  tex = tex.replace(/^\s*%.*$/gm, '');
+  tex = tex.replace(/\\begin\{(equation|align|gather|multline)\*?\}[\s\S]+?\\end\{\1\*?\}|\\\[[\s\S]+?\\\]|\$\$[\s\S]+?\$\$|\\\([\s\S]+?\\\)|\$(?:\\\$|[^$])+?\$/g, m => hold(esc(m)));
+  tex = tex.replace(/\\begin\{tabular\}\{[^}]*\}([\s\S]*?)\\end\{tabular\}/g, (_, body) => {
+    const rows = body.replace(/\\hline|\\cline\{[^}]*\}/g, '').split(/\\\\/).map(r => r.trim()).filter(Boolean);
+    return hold('<div style="overflow-x:auto"><table>' + rows.map(r => '<tr>' + r.split(/(?<!\\)&/).map(c => {
+      c = c.trim(); let span = 1;
+      const mc = c.match(/^\\multicolumn\{(\d+)\}\{[^}]*\}\{([\s\S]*)\}$/); if (mc){ span = +mc[1]; c = mc[2]; }
+      const mr = c.match(/^\\multirow\{\d+\}\{[^}]*\}\{([\s\S]*)\}$/); if (mr) c = mr[1];
+      return `<td colspan="${span}">${inline(c)}</td>`;
+    }).join('') + '</tr>').join('') + '</table></div>');
+  });
+  tex = tex.replace(/\\includegraphics(\[[^\]]*\])?\{figs\/([^}]+)\}/g, (_, o, n) => hold(`<img data-fig="${esc(n)}" alt="図">`));
+  tex = tex.replace(/\\begin\{itemize\}/g, hold('<ul>')).replace(/\\end\{itemize\}/g, hold('</ul>')).replace(/\\item\s*/g, hold('<li>'));
+  tex = tex.replace(/\\(begin|end)\{center\}/g, '').replace(/\\noindent\\rule\{[^}]*\}\{[^}]*\}/g, hold('<hr>'));
+  tex = tex.replace(/\\section\*?\{([^}]*)\}/g, (_, t) => hold(`<h2>${inline(t)}</h2>`))
+           .replace(/\\subsection\*?\{([^}]*)\}/g, (_, t) => hold(`<h3>${inline(t)}</h3>`))
+           .replace(/\\subsubsection\*?\{([^}]*)\}/g, (_, t) => hold(`<h4>${inline(t)}</h4>`));
+  let out = tex.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean).map(p => /^\u0000\d+\u0000$/.test(p) ? p : `<p>${inline(p)}</p>`).join('\n');
+  for (let i = 0; i < 3; i++) out = out.replace(/\u0000(\d+)\u0000/g, (_, k) => keep[+k]);
+  return out;
+}
+function inline(s){
+  s = esc(s).replace(/\\textbf\{([^{}]*)\}/g, '<b>$1</b>').replace(/\\textit\{([^{}]*)\}/g, '<i>$1</i>').replace(/\\texttt\{([^{}]*)\}/g, '<code>$1</code>');
+  return s.replace(/\\(&amp;|%|#|_)/g, '$1').replace(/\\textasciitilde\{\}/g, '~').replace(/\\textasciicircum\{\}/g, '^').replace(/\\\\/g, '<br>');
+}
+async function typeset(el){
+  try{ if (window.MathJax?.typesetPromise){ MathJax.typesetClear?.([el]); await MathJax.typesetPromise([el]); } }catch(e){ console.warn(e); }
+}
+async function cropFig(p, box){
+  const c = await assetCanvas(p.img), W = c.width, H = c.height, pad = 8;
+  const x1 = Math.max(0, box[0] / 1000 * W - pad), y1 = Math.max(0, box[1] / 1000 * H - pad);
+  const x2 = Math.min(W, box[2] / 1000 * W + pad), y2 = Math.min(H, box[3] / 1000 * H + pad);
+  const o = makeCanvas(x2 - x1, y2 - y1); o.getContext('2d').drawImage(c, x1, y1, x2 - x1, y2 - y1, 0, 0, o.width, o.height);
+  freeCanvas(c); return o;
+}
+
+/* ---------------------------------------------------------------------
+   文字付きPDF（ページ画像＋透明な文字）を自前で組み立てる
+   --------------------------------------------------------------------- */
+function mdToLines(md){
+  let t = (md || '').replace(/<table\b[\s\S]*?<\/table>/gi, m => '\n' + [...new DOMParser().parseFromString(m, 'text/html').querySelectorAll('tr')]
+    .map(tr => [...tr.children].map(c => c.textContent.trim()).join('  ')).join('\n') + '\n');
+  t = t.replace(BBOX_RE, '').replace(/<[^>]+>/g, '');
+  t = t.replace(/\$\$([\s\S]+?)\$\$/g, (_, m) => m.replace(/\n/g, ' ')).replace(/\\\[([\s\S]+?)\\\]/g, (_, m) => m.replace(/\n/g, ' '));
+  t = t.replace(/\$/g, '').replace(/\\\(|\\\)/g, '').replace(/^#{1,6}\s*/gm, '').replace(/\*\*(.+?)\*\*/g, '$1');
+  return unhtml(t).split('\n').map(s => s.trim()).filter(Boolean);
+}
+function lineBands(canvas){
+  const { g, w, h, r } = grayOf(canvas, 1400), th = otsu(g), m = Math.round(w * .015);
+  const prof = new Array(h).fill(0);
+  for (let y = 0; y < h; y++) for (let x = m; x < w - m; x++) if (g[y*w+x] < th) prof[y]++;
+  const on = prof.map(v => v > Math.max(2, w * .004));
+  const bands = []; let s = null;
+  on.concat([false]).forEach((v, y) => { if (v && s === null) s = y; else if (!v && s !== null){ bands.push([s, y]); s = null; } });
+  if (!bands.length) return [];
+  const med = bands.map(b => b[1] - b[0]).sort((a, b) => a - b)[bands.length >> 1];
+  const merged = [bands[0].slice()];
+  for (const b of bands.slice(1)){ const L = merged[merged.length - 1]; if (b[0] - L[1] < med * .35) L[1] = b[1]; else merged.push(b.slice()); }
+  const out = [];
+  for (const [y0, y1] of merged){
+    if (y1 - y0 < Math.max(3, med * .3)) continue;
+    let x0 = -1, x1 = -1;
+    for (let x = m; x < w - m; x++){ let any = false; for (let y = y0; y < y1; y++) if (g[y*w+x] < th){ any = true; break; } if (any){ if (x0 < 0) x0 = x; x1 = x + 1; } }
+    if (x0 >= 0) out.push([x0 / r, y0 / r, x1 / r, y1 / r]);
+  }
+  return out;
+}
+function utf16hex(s){ let h = ''; for (const ch of s){ const c = ch.codePointAt(0); if (c > 0xFFFF) continue; h += c.toString(16).padStart(4, '0'); } return h.toUpperCase(); }
+const textW = s => [...s].reduce((a, ch) => a + (ch.codePointAt(0) < 0x2000 ? .5 : 1), 0);
+async function buildPdf(pages){
+  const enc = new TextEncoder(), chunks = [], offsets = []; let pos = 0;
+  const push = x => { const b = typeof x === 'string' ? enc.encode(x) : x; chunks.push(b); pos += b.length; };
+  const objs = []; // 番号は 1 から
+  const reserve = () => objs.push(null);
+  const PX2PT = 72 / 200;
+  const CATALOG = reserve(), PAGES = reserve(), FONT = reserve(), CID = reserve(), DESC = reserve();
+  const pageNums = [];
+  const put = (n, parts) => { objs[n - 1] = parts; };
+  put(FONT, [`<< /Type /Font /Subtype /Type0 /BaseFont /HeiseiKakuGo-W5-UniJIS-UCS2-H /Encoding /UniJIS-UCS2-H /DescendantFonts [${CID} 0 R] >>`]);
+  put(CID, [`<< /Type /Font /Subtype /CIDFontType0 /BaseFont /HeiseiKakuGo-W5 /CIDSystemInfo << /Registry (Adobe) /Ordering (Japan1) /Supplement 2 >> /FontDescriptor ${DESC} 0 R /DW 1000 /W [1 95 500 231 389 500] >>`]);
+  put(DESC, [`<< /Type /FontDescriptor /FontName /HeiseiKakuGo-W5 /Flags 4 /FontBBox [-92 -250 1010 922] /ItalicAngle 0 /Ascent 752 /Descent -221 /CapHeight 737 /StemV 114 >>`]);
+  for (const { canvas, md } of pages){
+    const w = canvas.width, h = canvas.height, pw = (w * PX2PT).toFixed(2), ph = (h * PX2PT).toFixed(2);
+    const jpg = new Uint8Array(await (await toBlob(canvas, .8)).arrayBuffer());
+    const IMG = reserve(), CONTENT = reserve(), PAGE = reserve();
+    put(IMG, [`<< /Type /XObject /Subtype /Image /Width ${w} /Height ${h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpg.length} >>\nstream\n`, jpg, '\nendstream']);
+    let cs = `q ${pw} 0 0 ${ph} 0 0 cm /Im0 Do Q\n`;
+    const lines = mdToLines(md);
+    if (lines.length){
+      let bands = lineBands(canvas); const n = lines.length;
+      if (!bands.length) bands = lines.map((_, i) => [w * .08, h * (.05 + .9 * i / n), w * .92, h * (.05 + .9 * (i + .8) / n)]);
+      const nb = bands.length, groups = new Map();
+      lines.forEach((ln, i) => { const bi = n === nb ? i : Math.min(nb - 1, Math.floor(i * nb / n)); if (!groups.has(bi)) groups.set(bi, []); groups.get(bi).push(ln); });
+      cs += 'BT 3 Tr\n';
+      for (const [bi, lns] of groups){
+        const [x0, y0, x1, y1] = bands[bi], sub = (y1 - y0) / lns.length;
+        lns.forEach((ln, j) => {
+          const size = Math.max(4, sub * .85 * PX2PT), target = Math.max(10, (x1 - x0) * PX2PT);
+          const tz = Math.max(10, Math.min(400, 100 * target / (textW(ln) * size || 1)));
+          const yy = (h - (y0 + sub * j) - sub * .85) * PX2PT;
+          cs += `/F1 ${size.toFixed(2)} Tf ${tz.toFixed(1)} Tz 1 0 0 1 ${(x0 * PX2PT).toFixed(2)} ${yy.toFixed(2)} Tm <${utf16hex(ln)}> Tj\n`;
+        });
+      }
+      cs += 'ET\n';
+    }
+    const csb = enc.encode(cs);
+    put(CONTENT, [`<< /Length ${csb.length} >>\nstream\n`, csb, '\nendstream']);
+    put(PAGE, [`<< /Type /Page /Parent ${PAGES} 0 R /MediaBox [0 0 ${pw} ${ph}] /Resources << /XObject << /Im0 ${IMG} 0 R >> /Font << /F1 ${FONT} 0 R >> >> /Contents ${CONTENT} 0 R >>`]);
+    pageNums.push(PAGE); freeCanvas(canvas);
+  }
+  put(CATALOG, [`<< /Type /Catalog /Pages ${PAGES} 0 R >>`]);
+  put(PAGES, [`<< /Type /Pages /Kids [${pageNums.map(n => n + ' 0 R').join(' ')}] /Count ${pageNums.length} >>`]);
+  push('%PDF-1.4\n'); push(new Uint8Array([0x25, 0xE2, 0xE3, 0xCF, 0xD3, 0x0A]));
+  objs.forEach((parts, i) => { offsets[i] = pos; push(`${i + 1} 0 obj\n`); parts.forEach(push); push('\nendobj\n'); });
+  const xref = pos;
+  push(`xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offsets.map(o => String(o).padStart(10, '0') + ' 00000 n \n').join(''));
+  push(`trailer\n<< /Size ${objs.length + 1} /Root ${CATALOG} 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  return new Blob(chunks, { type: 'application/pdf' });
+}
+
+/* ---------------------------------------------------------------------
+   ZIP（無圧縮）：main.tex ＋ figs/
+   --------------------------------------------------------------------- */
+const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++){ let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+const crc32 = b => { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+function buildZip(files){ // [{name, data:Uint8Array}]
+  const enc = new TextEncoder(), parts = [], central = []; let off = 0;
+  const u16 = v => [v & 255, (v >>> 8) & 255], u32 = v => [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255];
+  for (const f of files){
+    const nm = enc.encode(f.name), crc = crc32(f.data), sz = f.data.length;
+    const head = new Uint8Array([...u32(0x04034b50), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0x21), ...u32(crc), ...u32(sz), ...u32(sz), ...u16(nm.length), ...u16(0)]);
+    parts.push(head, nm, f.data);
+    central.push(new Uint8Array([...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0x21), ...u32(crc), ...u32(sz), ...u32(sz), ...u16(nm.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(off)]), nm);
+    off += head.length + nm.length + sz;
+  }
+  const cdSize = central.reduce((a, b) => a + b.length, 0);
+  const end = new Uint8Array([...u32(0x06054b50), ...u16(0), ...u16(0), ...u16(files.length), ...u16(files.length), ...u32(cdSize), ...u32(off), ...u16(0)]);
+  return new Blob([...parts, ...central, end], { type: 'application/zip' });
+}
+
+/* ---------------------------------------------------------------------
+   画面
+   --------------------------------------------------------------------- */
+const S = { view: 'home', folder: null, scan: null, pages: [], page: null, tab: 'text', editing: false, cropping: null, busy: null, sheet: null, sel: new Set() };
+const lib = () => Store.lib;
+const folderOf = id => lib().folders.find(f => f.id === id);
+const scanOf = id => lib().folders.find(f => f.id === id); // フォルダが写真・PDFのページを直接持つ
+const STATUS = { new: ['未読取', ''], reading: ['読取中', 'run'], fixing: ['見直し中', 'run'], done: ['完了', 'ok'], error: ['エラー', 'err'] };
+const chip = p => { const [t, c] = STATUS[p.status] || STATUS.new; return p.status === 'done' && p.issues?.length ? '<span class="chip warn">要確認</span>' : `<span class="chip ${c}">${t}</span>`; };
+
+function go(view, extra = {}){ if (view !== 'camera' && Cam.stream) closeCamera(); Object.assign(S, { view, editing: false, cropping: null }, extra); if (view !== 'scan' && view !== 'page') S.sel = new Set(); render(); window.scrollTo(0, 0); }
+
+function header(title, back){
+  return `<header class="top">${back ? `<button class="iconbtn" data-act="back">‹ 戻る</button>` : ''}<h1>${esc(title)}</h1>
+    ${S.view === 'home' ? '<button class="iconbtn" data-act="settings">設定</button>' : ''}
+    ${S.view === 'scan' && S.sel.size ? '<button class="iconbtn" data-act="selnone">選択を解除</button>' : ''}
+    ${S.view === 'scan' && !S.sel.size ? '<button class="iconbtn" data-act="foldermenu" aria-label="メニュー">…</button>' : ''}</header>`;
+}
+
+function render(){
+  const app = $('#app');
+  let html = '', bar = '';
+  if (S.view === 'home'){
+    html = header('スキャンツール');
+    if (Store.mode !== 'local') html += `<div class="banner">このブラウザでは保存できません（プライベートブラウズでは保存されません）。ふつうのSafariで開いてください。</div>`;
+    else if (!lib().settings.apiKey && lib().settings.engine !== 'offline') html += `<div class="banner">今はオフライン読み取りだけで動きます。数式をTeXにしたり、読みにくいページを直したりするには「設定」でClaudeのAPIキーを入れてください。</div>`;
+    const fs = [...lib().folders].sort((a, b) => b.created - a.created);
+    html += `<div class="section-label">フォルダ</div>`;
+    html += fs.length ? `<div class="list">${fs.map(folderRow).join('')}</div>`
+      : `<div class="list"><div class="empty">まだフォルダがありません。<br>「新しいフォルダ」を作って、写真やPDFを入れていきます。</div></div>`;
+    bar = `<button class="btn primary" data-act="newfolder">新しいフォルダ</button>`;
+  }
+  else if (S.view === 'scan'){
+    const f = scanOf(S.scan), ps = S.pages, n = S.sel.size;
+    const done = ps.filter(p => p.status === 'done').length;
+    html = header(n ? `${n}枚を選択` : (f?.name || 'フォルダ'), !n);
+    if (S.busy?.scan === S.scan) html += `<div class="progress"><i style="width:${Math.round(100 * S.busy.done / S.busy.total)}%"></i></div><div class="note">${esc(S.busy.label)}</div>`;
+    else html += `<div class="note">${ps.length ? `${ps.length}枚・文字化済み ${done}　｜　横になぞると選択、タップで開く` : ''}</div>`;
+    html += ps.length ? `<div class="grid" id="grid">${ps.map(pg => {
+        const dot = pg.status === 'reading' || pg.status === 'fixing' ? 'run' : pg.status === 'error' ? 'err' : pg.status === 'done' ? (pg.issues?.length ? 'warn' : 'ok') : '';
+        return `<button class="tile${S.sel.has(pg.id) ? ' picked' : ''}" data-act="openpage" data-id="${pg.id}" aria-label="${pg.n}枚目" aria-pressed="${S.sel.has(pg.id)}"><img src="${Store.url(pg.img)}" alt="" draggable="false">${dot ? `<span class="dot ${dot}"></span>` : ''}<span class="check" aria-hidden="true"></span></button>`;
+      }).join('')}</div>`
+      : `<div class="list" style="margin-top:14px"><div class="empty">「撮影」でページを撮るか、「写真・PDF」でアルバムの写真やPDFファイルを入れます。<br>紙の四隅は自動で見つけて、まっすぐ・白く整えます。</div></div>
+        <div class="note" style="margin-top:12px">「撮影」では、カメラに写った紙の四隅を自動で追いかけ、紙が止まると自動でシャッターを切ります。続けて何枚でも撮れます。</div>`;
+    if (S.busy?.scan === S.scan) bar = `<button class="btn" data-act="stop">止める</button>`;
+    else if (n) bar = `<button class="btn" data-act="selmore">その他</button><button class="btn" data-act="selpdf">PDFに出力</button><button class="btn primary" data-act="selocr" ${S.busy ? 'disabled' : ''}>文字化</button>`;
+    else if (!ps.length) bar = `<button class="btn" data-act="addphoto">写真・PDF</button><button class="btn primary" data-act="camera">撮影</button>`;
+    else bar = `<button class="btn" data-act="addphoto">写真・PDF</button><button class="btn" data-act="selall">すべて選択</button><button class="btn primary" data-act="camera">撮影</button>`;
+  }
+  else if (S.view === 'camera'){
+    app.innerHTML = `<div class="cam"><video id="camVideo" playsinline muted autoplay></video><svg id="camSvg"></svg><div class="cam-flash" id="camFlash"></div>
+      <div class="cam-top"><button class="iconbtn" data-act="back" style="color:#fff">‹ 戻る</button><span class="cam-hint" id="camHint">カメラを準備しています…</span></div>
+      <div class="cam-bottom"><button class="cam-side" data-act="campick">写真・PDF</button><button class="cam-shutter" data-act="shutter" aria-label="撮影"></button>
+      <div class="cam-right"><button class="cam-side" id="camAutoBtn" data-act="camauto">${lib().settings.auto ? '自動 ON' : '自動 OFF'}</button><button class="cam-side done" data-act="camdone">完了 <span id="camCount">${Cam.shots ? Cam.shots + '枚' : ''}</span></button></div></div></div>`;
+    return;
+  }
+  else if (S.view === 'page'){
+    const p = S.page, sc = scanOf(S.scan);
+    html = header(`${sc?.name || ''}　${p.n}枚目`, true);
+    html += `<div class="seg" role="tablist"><button aria-pressed="${S.tab === 'image'}" data-act="tab" data-tab="image">画像</button><button aria-pressed="${S.tab === 'text'}" data-act="tab" data-tab="text">文字</button></div>`;
+    if (S.tab === 'image'){
+      if (S.cropping){
+        html += `<div class="stage"><div class="crop" id="crop"><img src="${Store.url(p.orig)}" alt="元の写真" id="cropImg"><svg id="cropSvg"></svg></div></div>
+          <div class="loupe" id="loupe" hidden></div>
+          <div class="note">丸を紙の四隅に合わせます。本のページが反っているときは、上下の四角を縁のふくらみに合わせると平らに伸ばせます。</div>
+          <div class="tools"><button class="btn small" data-act="autocorner">自動で検出</button><button class="btn small" data-act="straight">縁をまっすぐに</button><button class="btn small" data-act="fullcorner">写真全体</button></div>`;
+        bar = S.review
+          ? `<button class="btn" data-act="cropdone" data-next="1">決定して次を撮る</button><button class="btn primary" data-act="cropdone">決定</button>`
+          : `<button class="btn" data-act="cropcancel">やめる</button><button class="btn primary" data-act="cropdone">この範囲で補正</button>`;
+      } else {
+        html += `<div class="stage"><img class="page" src="${Store.url(p.img)}" alt="補正後の画像"></div>
+          <div class="tools">
+            <button class="btn small" data-act="crop">四隅を調整</button>
+            <button class="btn small" data-act="rot" data-d="-90">左に回転</button>
+            <button class="btn small" data-act="rot" data-d="90">右に回転</button>
+          </div>
+          <div class="seg">${[['scan','くっきり'],['bw','白黒'],['color','元の色']].map(([v, t]) => `<button aria-pressed="${(p.filter || 'scan') === v}" data-act="filter" data-f="${v}">${t}</button>`).join('')}</div>
+          <div class="tools"><button class="btn small" data-act="movepage" data-d="-1">前へ移動</button><button class="btn small" data-act="movepage" data-d="1">後ろへ移動</button><button class="btn small" data-act="delpage" style="color:var(--err)">このページを削除</button></div>`;
+        bar = pageNav();
+      }
+    } else {
+      if (p.issues?.length && p.status === 'done') html += `<div class="issues">要確認：${esc(p.issues.join('／'))}</div>`;
+      if (p.error) html += `<div class="err">${esc(p.error)}</div>`;
+      if (p.status === 'reading' || p.status === 'fixing') html += `<div class="doc"><div class="wait" id="live">${esc(p.live || (p.status === 'fixing' ? 'Claudeが画像と照合して見直しています…' : 'Claudeが読み取っています…'))}</div></div>`;
+      else if (!p.tex) html += `<div class="doc"><div class="wait">まだ文字起こししていません。下の「このページを読む」を押してください。</div></div>`;
+      else if (S.editing) html += `<textarea class="tex" id="texEdit" spellcheck="false">${esc(p.tex)}</textarea><div class="doc" id="docView"></div>`;
+      else html += `<div class="doc" id="docView"></div>`;
+      if (p.tex && !(p.status === 'reading' || p.status === 'fixing')){
+        html += `<div class="tools"><button class="btn small" data-act="edit">${S.editing ? '編集を終える' : 'LaTeXを編集'}</button>
+          <button class="btn small" data-act="copypage">LaTeXをコピー</button>
+          <button class="btn small" data-act="fixpage">Claudeに見直させる</button></div>`;
+        if (p.edited) html += `<div class="note">手で編集済み。「読み直す」「見直させる」をすると上書きされます。</div>`;
+      }
+      bar = S.busy ? `<button class="btn" data-act="stop">止める</button>` : `<button class="btn" data-act="readpage">${p.tex ? '読み直す' : 'このページを読む'}</button>` + pageNav(true);
+    }
+  }
+  app.innerHTML = html + (bar ? `<div class="bar"><div class="bar-inner">${bar}</div></div>` : '') + (S.sheet ? sheetHtml() : '');
+  afterRender();
+}
+function pageNav(compact){
+  const i = S.pages.findIndex(q => q.id === S.page.id);
+  return `<button class="btn${compact ? ' small' : ''}" data-act="pnav" data-d="-1" ${i > 0 ? '' : 'disabled'}>‹ 前</button><button class="btn${compact ? ' small' : ''}" data-act="pnav" data-d="1" ${i < S.pages.length - 1 ? '' : 'disabled'}>次 ›</button>`;
+}
+function folderRow(f){
+  const d = new Date(f.created), n = (f.pages || []).length;
+  return `<button class="row" data-act="openfolder" data-id="${f.id}">${f.cover ? `<img class="thumb" src="${Store.url(f.cover)}" alt="">` : '<span class="thumb folder-thumb"><span class="folder-ico"></span></span>'}
+    <span class="name">${esc(f.name)}<br><span class="meta">${d.getMonth()+1}/${d.getDate()} 作成</span></span><span class="meta">${n}枚</span></button>`;
+}
+async function afterRender(){
+  const v = $('#docView');
+  if (v && S.page){
+    v.innerHTML = texToHtml(S.page.tex || '');
+    for (const img of v.querySelectorAll('img[data-fig]')){
+      const f = (S.page.figs || []).find(x => x.name === img.dataset.fig);
+      if (f) cropFig(S.page, f.box).then(c => { img.src = c.toDataURL('image/jpeg', .85); }).catch(() => {});
+    }
+    typeset(v);
+  }
+  const ta = $('#texEdit');
+  if (ta){
+    let t; ta.oninput = () => {
+      S.page.tex = ta.value; S.page.edited = true;
+      clearTimeout(t); t = setTimeout(() => { const d = $('#docView'); if (d){ d.innerHTML = texToHtml(ta.value); typeset(d); } Store.savePage(S.page); }, 600);
+    };
+  }
+  if (S.cropping) setupCrop();
+  setupGrid();
+}
+
+/* ---------- なぞって選択：横になぞると選択／解除、縦はスクロール、長押しでも選択 ---------- */
+let suppressUntil = 0; // なぞり・長押しの直後のタップでページが開かないように
+function setupGrid(){
+  const grid = $('#grid'); if (!grid) return;
+  const tileAt = (x, y) => document.elementFromPoint(x, y)?.closest?.('.tile[data-id]');
+  let mode = null, start = null, adding = true, lp = null, raf = null, lastY = 0;
+  const label = () => { const h1 = $('header.top h1'); if (h1) h1.textContent = S.sel.size ? `${S.sel.size}枚を選択` : (scanOf(S.scan)?.name || ''); };
+  const apply = t => {
+    if (!t) return;
+    const id = t.dataset.id, has = S.sel.has(id);
+    if (adding && !has){ S.sel.add(id); t.classList.add('picked'); }
+    if (!adding && has){ S.sel.delete(id); t.classList.remove('picked'); }
+    label();
+  };
+  const auto = () => { // 画面の端までなぞると自動スクロール
+    const dy = lastY > innerHeight - 150 ? 14 : lastY < 150 ? -14 : 0;
+    if (dy) scrollBy(0, dy);
+    raf = mode === 'select' ? requestAnimationFrame(auto) : null;
+  };
+  const begin = (t, e) => {
+    mode = 'select'; adding = !S.sel.has(t.dataset.id); apply(t);
+    try{ grid.setPointerCapture(e.pointerId); }catch{}
+    suppressUntil = Date.now() + 800; raf = requestAnimationFrame(auto);
+  };
+  grid.onpointerdown = e => {
+    const t = e.target.closest('.tile[data-id]'); if (!t) return;
+    mode = 'pending'; start = { x: e.clientX, y: e.clientY, t }; lastY = e.clientY;
+    lp = setTimeout(() => { if (mode === 'pending'){ navigator.vibrate?.(10); begin(t, e); } }, 420);
+  };
+  grid.onpointermove = e => {
+    if (!mode) return; lastY = e.clientY;
+    if (mode === 'pending'){
+      const dx = e.clientX - start.x, dy = e.clientY - start.y;
+      if (Math.hypot(dx, dy) < 8) return;
+      clearTimeout(lp);
+      if (Math.abs(dx) > Math.abs(dy)) begin(start.t, e); else { mode = null; return; } // 縦はスクロールに任せる
+    }
+    e.preventDefault(); apply(tileAt(e.clientX, e.clientY));
+  };
+  grid.onpointerup = grid.onpointercancel = () => {
+    clearTimeout(lp);
+    if (mode === 'select'){ cancelAnimationFrame(raf); mode = null; render(); return; }
+    mode = null;
+  };
+  grid.oncontextmenu = e => e.preventDefault();
+}
+
+/* ---------- 四隅と縁の調整（丸＝角、四角＝上下の縁の曲がり。拡大鏡つき） ---------- */
+// S.cropping = [tl, tr, br, bl, topMid, bottomMid]（0〜1）
+function cropFrom(corners, mids){ const q = JSON.parse(JSON.stringify(corners)); return q.concat(JSON.parse(JSON.stringify(mids || straightMids(q)))); }
+function setupCrop(){
+  const img = $('#cropImg'), svg = $('#cropSvg'), loupe = $('#loupe');
+  const draw = () => {
+    const q = S.cropping, W = img.clientWidth, H = img.clientHeight, P = i => [q[i][0] * W, q[i][1] * H];
+    const [tl, tr, br, bl, mt, mb] = [0, 1, 2, 3, 4, 5].map(P);
+    const ctl = (a, b, m) => [2 * m[0] - (a[0] + b[0]) / 2, 2 * m[1] - (a[1] + b[1]) / 2];
+    const ct = ctl(tl, tr, mt), cb = ctl(bl, br, mb);
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = `<path d="M${tl} Q${ct} ${tr} L${br} Q${cb} ${bl} Z" class="edge"/>`
+      + [tl, tr, br, bl].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="13"/>`).join('')
+      + [mt, mb].map(([x, y]) => `<rect x="${x - 9}" y="${y - 9}" width="18" height="18" rx="4"/>`).join('');
+  };
+  if (img.complete) draw(); else img.onload = draw;
+  let drag = -1;
+  const showLoupe = (i, e) => {
+    const r = img.getBoundingClientRect(), [x, y] = S.cropping[i], Z = 3, D = 110;
+    loupe.hidden = false;
+    loupe.style.left = Math.min(innerWidth - D - 8, Math.max(8, e.clientX - D / 2)) + 'px';
+    loupe.style.top = Math.max(8, e.clientY - D - 60) + 'px';
+    loupe.style.backgroundImage = `url("${img.src}")`;
+    loupe.style.backgroundSize = `${r.width * Z}px ${r.height * Z}px`;
+    loupe.style.backgroundPosition = `${D / 2 - x * r.width * Z}px ${D / 2 - y * r.height * Z}px`;
+  };
+  svg.onpointerdown = e => {
+    const r = svg.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+    let best = -1, bd = 1e9;
+    S.cropping.forEach(([x, y], i) => { const dd = Math.hypot((x - px) * r.width, (y - py) * r.height); if (dd < bd){ bd = dd; best = i; } });
+    if (bd < 44){ drag = best; svg.setPointerCapture(e.pointerId); e.preventDefault(); showLoupe(best, e); }
+  };
+  svg.onpointermove = e => {
+    if (drag < 0) return;
+    const r = svg.getBoundingClientRect(), q = S.cropping;
+    const nx = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), ny = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+    if (drag < 4){ // 角を動かしたら、隣の縁の中央も半分だけ一緒に動かす（曲がりを保つ）
+      const dx = nx - q[drag][0], dy = ny - q[drag][1], mid = drag < 2 ? 4 : 5;
+      q[mid] = [q[mid][0] + dx / 2, q[mid][1] + dy / 2];
+    }
+    q[drag] = [nx, ny];
+    draw(); showLoupe(drag, e);
+  };
+  svg.onpointerup = svg.onpointercancel = () => { drag = -1; loupe.hidden = true; };
+  S._drawCrop = draw;
+}
+
+/* ---------- 下から出るシート ---------- */
+function sheetHtml(){
+  const s = S.sheet;
+  let body = '';
+  if (s.kind === 'input') body = `<h2>${esc(s.title)}</h2><input type="text" id="sheetInput" value="${esc(s.value || '')}" placeholder="${esc(s.placeholder || '')}">
+    <div class="btns"><button class="btn" data-act="sheetclose">やめる</button><button class="btn primary" data-act="sheetok">${esc(s.ok || '決定')}</button></div>`;
+  if (s.kind === 'confirm') body = `<h2>${esc(s.title)}</h2><div class="note">${esc(s.text || '')}</div>
+    <div class="btns"><button class="btn" data-act="sheetclose">やめる</button><button class="btn primary" data-act="sheetok" style="${s.danger ? 'background:var(--err);border-color:var(--err)' : ''}">${esc(s.ok || 'OK')}</button></div>`;
+  if (s.kind === 'export'){
+    const L = s.list || S.pages, n = L.filter(p => p.tex).length;
+    body = `<h2>${s.list ? `選んだ${L.length}枚を書き出し` : '書き出し'}</h2><div class="note">${n === L.length ? '全ページの文字が入ります。' : n ? `${n}/${L.length}ページ分の文字が入ります。残りは「文字起こし」で読めます。` : 'まだ文字起こししていないので、PDFは画像だけになります。'}</div>
+      <button class="btn primary" data-act="exppdf">文字付きPDF（検索・コピーできる）</button>
+      <button class="btn" data-act="exptex">TeX（.tex）</button>
+      <button class="btn" data-act="expzip">TeX＋図（.zip）</button>
+      <button class="btn" data-act="copyall">LaTeXを全部コピー</button>
+      <button class="btn" data-act="sheetclose">閉じる</button>`;
+  }
+  if (s.kind === 'notice') body = `<h2>${esc(s.title)}</h2><div class="note" style="white-space:pre-wrap;font-size:15px;color:var(--ink)">${esc(s.text || '')}</div>
+    <div class="btns"><button class="btn primary" data-act="sheetclose">閉じる</button></div>`;
+  if (s.kind === 'foldermenu'){
+    const left = S.pages.filter(p => p.status !== 'done').length;
+    body = `<h2>${esc(scanOf(S.scan)?.name || '')}</h2>
+      <button class="btn" data-act="ocrrest" ${left && !S.busy ? '' : 'disabled'}>未読取の${left}枚をまとめて文字化</button>
+      <button class="btn" data-act="export" ${S.pages.length ? '' : 'disabled'}>全部を書き出す</button>
+      <button class="btn" data-act="renamefolder">フォルダ名を変える</button>
+      <button class="btn" data-act="delfolder" style="color:var(--err)">フォルダを削除</button>
+      <button class="btn" data-act="sheetclose">閉じる</button>`;
+  }
+  if (s.kind === 'selmore'){
+    body = `<h2>選んだ${S.sel.size}枚を</h2>
+      <button class="btn" data-act="selexport">書き出す（PDF・TeX・コピー）</button>
+      <div class="seg">${[['scan','くっきり'],['bw','白黒'],['color','元の色']].map(([v, t]) => `<button data-act="selfilter" data-f="${v}">${t}</button>`).join('')}</div>
+      <button class="btn" data-act="seldetect">四隅を自動で検出し直す</button>
+      <button class="btn" data-act="selrot">右に回転</button>
+      <button class="btn" data-act="selmove">別のフォルダへ移す</button>
+      <button class="btn" data-act="seldel" style="color:var(--err)">削除</button>
+      <button class="btn" data-act="sheetclose">閉じる</button>`;
+  }
+  if (s.kind === 'pickfolder'){
+    body = `<h2>${esc(s.title)}</h2>${lib().folders.filter(f => f.id !== S.scan).map(f => `<button class="btn" data-act="pickfolder" data-id="${f.id}">${esc(f.name)}</button>`).join('')}
+      <button class="btn" data-act="pickfolder" data-id="__new">＋ 新しいフォルダ</button><button class="btn" data-act="sheetclose">やめる</button>`;
+  }
+  if (s.kind === 'settings'){
+    const st = lib().settings;
+    body = `<h2>設定</h2>
+      <div class="note" style="margin:0">読み取り方法</div>
+      <label class="opt"><input type="radio" name="engine" value="auto" ${st.engine === 'auto' ? 'checked' : ''}><span>おまかせ（おすすめ）<small>まずiPhoneの中でオフライン読み取り。数式がありそうなページ・読みにくいページだけClaudeが仕上げます。</small></span></label>
+      <label class="opt"><input type="radio" name="engine" value="offline" ${st.engine === 'offline' ? 'checked' : ''}><span>オフラインだけ（無料）<small>ネットも費用も不要。ふつうの文章向け。数式はTeXになりません。</small></span></label>
+      <label class="opt"><input type="radio" name="engine" value="claude" ${st.engine === 'claude' ? 'checked' : ''}><span>全部Claude（最高精度）<small>数式・表もきれいに。1ページ数円ほど。</small></span></label>
+      <label class="stack">ClaudeのAPIキー（console.anthropic.com で発行。このiPhoneの中だけに保存）
+        <input type="password" id="apiKey" placeholder="${st.apiKey ? '保存済み（変える時だけ入力）' : 'sk-ant-...'}" autocomplete="off"></label>
+      <label class="opt"><input type="checkbox" id="tierHigh" ${st.tier === 'complex' ? 'checked' : ''}><span>Claudeを高精度モデルにする<small>細かい数式が多いページ向け。時間と費用が増えます。</small></span></label>
+      <label class="opt"><input type="checkbox" id="autofix" ${st.autofix ? 'checked' : ''}><span>怪しいページは自動で見直す</span></label>
+      <label class="opt"><input type="checkbox" id="autoShot" ${st.auto ? 'checked' : ''}><span>紙を見つけたら自動で撮影<small>カメラで紙が1秒ほど止まると、自動でシャッターを切ります。</small></span></label>
+      <button class="btn" data-act="checkclaude">Claudeとの接続を確認</button>
+      <button class="btn" data-act="diag">動作の状態を見る</button>
+      <div class="note">Claudeを使うページは画像がAnthropicに送られます。生徒の個人情報が写ったものは「オフラインだけ」で読んでください。</div>
+      <div class="btns"><button class="btn" data-act="sheetclose">閉じる</button><button class="btn primary" data-act="savesettings">保存</button></div>`;
+  }
+  return `<div class="sheet-bg" data-act="sheetbg"><div class="sheet" role="dialog">${body}</div></div>`;
+}
+function ask(kind, opts){ return new Promise(res => { S.sheet = { kind, ...opts, resolve: res }; render(); setTimeout(() => $('#sheetInput')?.focus(), 50); }); }
+function closeSheet(val){ const r = S.sheet?.resolve; S.sheet = null; render(); r?.(val); }
+
+/* ---------- 写真を取り込む ---------- */
+let pickTarget = null;
+function openPicker(camera){ pickTarget = S.scan; (camera ? $('#camIn') : $('#picIn')).click(); }
+// 1枚の画像（写真・PDFのページ・カメラ）をフォルダに加える。found に四隅があればそれを使う
+async function addPhotoCanvas(sc, c, found, fromPdf = false){
+  let stage = '四隅の検出', out = null;
+  try{
+    if (!fromPdf && found === undefined){ try{ found = await findPage(c); }catch(e){ console.warn('detect', e); found = null; } }
+    const p = { id: newId(), scan: sc.id, n: sc.pages.length + 1, corners: found ? found.corners : FULL, mids: found?.mids || null,
+      profile: found?.profile || null, rotate: 0, filter: fromPdf ? 'color' : (lib().settings.filter || 'scan'), src: fromPdf ? 'pdf' : 'photo',
+      status: 'new', md: '', tex: '', figs: [], issues: [], edited: false, error: '', found: !!found };
+    stage = '元の写真の保存'; p.orig = await Store.upload(await toBlob(c, .9));
+    stage = '補正';
+    try{ out = renderFrom(c, p); }
+    catch(e){ console.warn('render', e); Object.assign(p, { corners: FULL, mids: null, profile: null, filter: 'color', found: false }); out = renderFrom(c, p); toast('補正できなかったので、写真のまま取り込みました'); }
+    stage = '補正後の保存'; p.img = await Store.upload(await toBlob(out, .88)); p.w = out.width; p.h = out.height;
+    stage = 'データの保存';
+    sc.pages.push(p.id); if (!sc.cover) sc.cover = p.img;
+    await Store.savePage(p); await Store.saveLib();
+    if (S.scan === sc.id){ S.pages.push(p); if (S.view === 'scan') render(); }
+    return p;
+  }catch(e){ e.stage = stage; throw e; }
+  finally { freeCanvas(c, out); }
+}
+async function onFiles(files, fromCamera){
+  if (!files?.length || !pickTarget) return;
+  const sc = scanOf(pickTarget); if (!sc) return;
+  const list = [...files]; let added = 0, lastAdded = null, failure = null;
+  for (let i = 0; i < list.length; i++){
+    try{
+      if (isPdf(list[i])){
+        toast('PDFを開いています…');
+        await pdfPages(list[i], async (c, k, n) => { toast(`PDFを取り込み中… ${k}/${n}ページ`); lastAdded = await addPhotoCanvas(sc, c, null, true); added++; });
+      } else {
+        toast(`取り込み中… ${i + 1}/${list.length}`);
+        let c; try{ c = await fileToCanvas(list[i]); }catch(e){ e.stage = '写真の読み込み'; throw e; }
+        lastAdded = await addPhotoCanvas(sc, c, undefined); added++;
+      }
+    }catch(e){ console.error(e); Diag.log('import:' + (e.stage || ''), e); failure = failure || e; }
+  }
+  if (failure) return ask('notice', { title: '取り込めないものがありました', text: `段階：${failure.stage || '不明'}\n内容：${failure.message || failure.code || failure}` });
+  if (fromCamera && lastAdded && S.scan === sc.id){
+    S.page = lastAdded; S.view = 'page'; S.tab = 'image';
+    S.cropping = cropFrom(lastAdded.corners, lastAdded.mids); S.cropProfile = lastAdded.profile; S.cropStart = JSON.stringify(S.cropping);
+    S.review = true; render(); window.scrollTo(0, 0);
+    if (!lastAdded.found) toast('紙の縁が見つかりませんでした。丸を四隅に合わせてください');
+    return;
+  }
+  if (added) toast(added > 1 ? `${added}枚を取り込みました` : '取り込みました');
+  if (S.view === 'scan') render();
+}
+$('#camIn').onchange = e => { onFiles(e.target.files, true); e.target.value = ''; };
+$('#picIn').onchange = e => { onFiles(e.target.files); e.target.value = ''; };
+
+async function reprocess(p, changes, quiet){
+  Object.assign(p, changes);
+  if (!quiet) toast('補正しています…');
+  try{
+    const out = await renderPage(p);
+    const old = p.img;
+    p.img = await Store.upload(await toBlob(out, .88)); p.w = out.width; p.h = out.height;
+    const sc = scanOf(p.scan); if (sc && sc.cover === old){ sc.cover = p.img; Store.saveLib(); }
+    await Store.savePage(p);
+    Store.dropAsset(old);
+    if (p.tex && !quiet) toast('画像を変えました。文字は「読み直す」で更新できます');
+  }catch(e){ console.error(e); toast('補正できませんでした'); }
+  if (!quiet) render();
+}
+
+/* ---------- 文字起こし ---------- */
+let ctl = null;
+// mode: 'read' | 'fix'。読み取り方法（設定）: auto＝まずオフライン→数式や読みにくいページだけClaude / claude / offline
+async function readPage(p, mode){
+  const canvas = await assetCanvas(p.img);
+  const st = lib().settings, tier = st.tier || 'default', hasKey = !!st.apiKey;
+  const engine = mode === 'fix' ? 'claude' : (st.engine || 'auto');
+  const show = (label, live) => { p.status = label; p.live = live || ''; p.error = ''; if (S.page?.id === p.id) render(); const el = $('#live'); if (el) el.textContent = p.live; };
+  let imgs = null; const halves = canvas.height > canvas.width * 1.15 ? 2 : 1;
+  const claude = async (prompt, label) => {
+    if (!imgs) imgs = await pageImagesForClaude(canvas);
+    show(label, label === 'fixing' ? 'Claudeが画像と照合して見直しています…' : 'Claudeが読み取っています…');
+    const r = await claudeCall(prompt, imgs, { tier, signal: ctl.signal,
+      onText: ({ text }) => { p.live = text.replace(/^[\s\S]*?<result>\s*/, ''); const el = $('#live'); if (el && S.page?.id === p.id) el.textContent = p.live; } });
+    return { md: pickResult(r.text), truncated: r.truncated, by: 'claude' };
+  };
+  let res;
+  try{
+    if (mode === 'fix') res = await claude(promptFix(halves, p.md || '', p.issues || []), 'fixing');
+    else if (engine === 'claude') res = await claude(promptRead(halves), 'reading');
+    else {
+      show('reading', 'オフラインで読み取り中…');
+      const off = await offlineRead(canvas, m => { const el = $('#live'); if (el && S.page?.id === p.id) el.textContent = m; S.busy && (S.busy.sub = m); });
+      res = { md: off.text.trim() + '\n', truncated: false, by: 'offline', conf: off.conf };
+      // 自動：数式がありそう・読み取りの自信が低いページだけ Claude で仕上げる
+      if (engine === 'auto' && hasKey && (off.conf < 80 || looksMathy(off.text))){
+        res = await claude(promptFix(halves, res.md, ['オフラインOCRの下書きです。数式はLaTeXに、表はHTMLの表に直してください']), 'fixing');
+        res.by = 'offline+claude';
+      }
+    }
+    if (mode !== 'fix' && engine === 'claude' && st.autofix){
+      const issues = checkMd(res.md, res.truncated);
+      if (issues.length) res = await claude(promptFix(halves, res.md, issues), 'fixing');
+    }
+  } finally { freeCanvas(canvas); }
+  const { tex, figs } = mdToTex(res.md, `p${String(p.n).padStart(2, '0')}`);
+  Object.assign(p, { md: res.md, tex, figs, issues: res.by === 'offline' ? [] : checkMd(res.md, res.truncated), status: 'done', edited: false, error: '', by: res.by });
+  delete p.live;
+  await Store.savePage(p);
+}
+async function runPages(list, mode = 'read', meta = {}){
+  if (S.busy) return toast('いま別の読み取りをしています');
+  if (!list.length) return toast('読むページがありません');
+  ctl = new AbortController(); let failure = null;
+  S.busy = { scan: meta.folder ? null : S.scan, folder: meta.folder || null, total: list.length, done: 0, label: '' };
+  render();
+  try{
+    for (const p of list){
+      const nm = meta.folder ? (scanOf(p.scan)?.name || '') + ' ' : '';
+      S.busy.label = `${nm}${p.n}枚目を読んでいます（${S.busy.done + 1}/${S.busy.total}）`; if (S.view === 'scan' || S.view === 'folder') render();
+      try{ await readPage(p, mode); }
+      catch(e){
+        if (e?.code === 'cancelled'){ p.status = p.tex ? 'done' : 'new'; delete p.live; break; }
+        console.error('read failed', e); Diag.log('read', e);
+        p.status = p.tex ? 'done' : 'error'; p.error = errText(e); delete p.live; await Store.savePage(p);
+        failure = failure || e;
+        if (['no_key', 'network', 'http_401', 'http_403', 'http_429'].includes(e?.code)) break;
+      }
+      S.busy.done++; render();
+    }
+  } finally {
+    S.busy = null; ctl = null; render();
+  }
+  const warn = list.filter(p => p.issues?.length).length;
+  if (failure) return ask('notice', { title: '文字化できませんでした', text: errText(failure) + (failure.code ? `（コード：${failure.code}）` : '') + '\n' + (HINT[failure.code] || '') });
+  if (list.every(p => p.status === 'done')) toast(warn ? `終わりました。要確認 ${warn}ページ` : '文字起こしが終わりました');
+}
+/* ---------- 書き出し ---------- */
+async function save(filename, blob){
+  const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+  // iPhone：共有シート（「"ファイル"に保存」やAirDrop、メールなど）
+  if (navigator.canShare?.({ files: [file] })){
+    try{ await navigator.share({ files: [file], title: filename }); return; }
+    catch(e){ if (e?.name === 'AbortError') return; }
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+}
+async function exportTex(list = exportList()){ await save(safeName(scanOf(S.scan)?.name) + '.tex', new Blob([buildTexDoc(list)], { type: 'text/plain' })); }
+const safeName = s => (s || 'scan').replace(/[\\/:*?"<>|]/g, '').trim() || 'scan';
+const exportList = () => S.sheet?.list || S.pages;
+async function exportPdf(list = exportList()){
+  toast('PDFを作っています…');
+  const pages = [];
+  for (const p of list) pages.push({ canvas: await assetCanvas(p.img), md: p.md || '' });
+  // （buildPdf の中で1ページずつJPEGにしたあと手放す）
+  await save(safeName(scanOf(S.scan)?.name) + '.pdf', await buildPdf(pages));
+}
+async function exportZip(list = exportList()){
+  toast('TeXをまとめています…');
+  const enc = new TextEncoder(), files = [{ name: 'main.tex', data: enc.encode(buildTexDoc(list)) }];
+  for (const p of list) for (const f of p.figs || []){
+    if (!p.tex.includes('figs/' + f.name)) continue;
+    const c = await cropFig(p, f.box); files.push({ name: 'figs/' + f.name, data: new Uint8Array(await (await toBlob(c, .9)).arrayBuffer()) });
+  }
+  await save(safeName(scanOf(S.scan)?.name) + '.zip', buildZip(files));
+}
+async function copyText(t){
+  try{ await navigator.clipboard.writeText(t); toast('コピーしました'); }
+  catch{
+    const ta = document.createElement('textarea'); ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta);
+    ta.select(); let ok = false; try{ ok = document.execCommand('copy'); }catch{} ta.remove();
+    toast(ok ? 'コピーしました' : 'コピーできませんでした。「LaTeXを編集」から選択してコピーしてください');
+  }
+}
+
+/* ---------------------------------------------------------------------
+   カメラ：撮影中に紙の四隅を追いかけ、止まったら自動で撮る（vFlat と同じ流れ）
+   --------------------------------------------------------------------- */
+const Cam = { armed: true, shotQuad: null, stream: null, video: null, timer: null, quad: null, conf: 0, stableSince: 0, lastShot: 0, shots: 0, queue: Promise.resolve(), busy: false, misses: 0 };
+async function openCamera(){
+  if (!navigator.mediaDevices?.getUserMedia){ toast('このブラウザではカメラを直接使えません。写真で取り込みます'); return openPicker(true); }
+  go('camera');
+  try{
+    Cam.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } } });
+  }catch(e){
+    Diag.log('camera', e); go('scan');
+    return ask('notice', { title: 'カメラを使えませんでした', text: `理由：${e.name || e}\nSafariの「設定 → Safari → カメラ」を「許可」にしてから、もう一度試してください。\nかわりに「写真・PDF」から取り込むこともできます。` });
+  }
+  const v = $('#camVideo'); Cam.video = v; v.srcObject = Cam.stream;
+  await v.play().catch(() => {});
+  Object.assign(Cam, { quad: null, conf: 0, stableSince: 0, shots: 0, misses: 0 });
+  Cam.timer = setInterval(camTick, 220);
+}
+function closeCamera(){
+  clearInterval(Cam.timer); Cam.timer = null;
+  Cam.stream?.getTracks().forEach(t => t.stop()); Cam.stream = null;
+}
+let camWork = null;
+function camTick(){
+  const v = Cam.video; if (!v || !v.videoWidth || Cam.busy) return;
+  Cam.busy = true;
+  try{
+    const r = 320 / Math.max(v.videoWidth, v.videoHeight);
+    if (!camWork) camWork = makeCanvas(1, 1);
+    camWork.width = Math.round(v.videoWidth * r); camWork.height = Math.round(v.videoHeight * r);
+    camWork.getContext('2d').drawImage(v, 0, 0, camWork.width, camWork.height);
+    const f = detectPage(camWork);
+    if (f && f.confidence >= 0.3){
+      const prev = Cam.quad;
+      const move = prev ? Math.max(...f.corners.map((c, i) => Math.hypot(c[0] - prev[i][0], c[1] - prev[i][1]))) : 1;
+      // 少しの揺れはならして、大きく動いたらすぐ追いかける
+      Cam.quad = prev && move < 0.08 ? prev.map((c, i) => [c[0] * 0.5 + f.corners[i][0] * 0.5, c[1] * 0.5 + f.corners[i][1] * 0.5]) : f.corners;
+      Cam.conf = f.confidence; Cam.misses = 0;
+      if (move > 0.015) Cam.stableSince = performance.now();
+    } else if (++Cam.misses > 3){ Cam.quad = null; Cam.conf = 0; Cam.stableSince = performance.now(); }
+    // 1枚撮ったら、紙を替える（いったん見えなくなる・大きく動く）まで次は自動で撮らない
+    if (!Cam.armed && (!Cam.quad || !Cam.shotQuad || Math.max(...Cam.quad.map((c, i) => Math.hypot(c[0] - Cam.shotQuad[i][0], c[1] - Cam.shotQuad[i][1]))) > 0.08)) Cam.armed = true;
+    drawCamOverlay();
+    // 自動撮影：紙がはっきり見えて、1秒ほど動かなかったら撮る
+    const now = performance.now();
+    if (lib().settings.auto && Cam.armed && Cam.quad && Cam.conf >= 0.45 && now - Cam.stableSince > 1000 && now - Cam.lastShot > 1500) shoot();
+  }catch(e){ Diag.log('camTick', e); }
+  finally { Cam.busy = false; }
+}
+function drawCamOverlay(){
+  const v = Cam.video, svg = $('#camSvg'), hint = $('#camHint'); if (!v || !svg) return;
+  const W = v.clientWidth, H = v.clientHeight, s = Math.min(W / v.videoWidth, H / v.videoHeight);
+  const dw = v.videoWidth * s, dh = v.videoHeight * s, ox = (W - dw) / 2, oy = (H - dh) / 2;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  if (!Cam.quad){ svg.innerHTML = ''; if (hint) hint.textContent = '紙全体が画面に入るように写してください'; return; }
+  const pts = Cam.quad.map(([x, y]) => `${ox + x * dw},${oy + y * dh}`).join(' ');
+  const ready = Cam.conf >= 0.45, steady = performance.now() - Cam.stableSince;
+  svg.innerHTML = `<polygon points="${pts}" class="${ready ? 'ok' : ''}"/>`;
+  if (hint) hint.textContent = !ready ? '紙の縁がはっきり見えるように少し離れてください' : !Cam.armed ? '撮りました。次の紙に替えてください' : lib().settings.auto ? (steady > 400 ? 'そのまま…' : '紙を見つけました。動かさずに') : '紙を見つけました。シャッターを押してください';
+}
+function shoot(){
+  const v = Cam.video; if (!v || !v.videoWidth) return;
+  Cam.lastShot = performance.now(); Cam.armed = false; Cam.shotQuad = Cam.quad;
+  const full = makeCanvas(v.videoWidth, v.videoHeight); full.getContext('2d').drawImage(v, 0, 0);
+  const quad = Cam.quad;
+  $('#camFlash')?.classList.add('on'); setTimeout(() => $('#camFlash')?.classList.remove('on'), 160);
+  navigator.vibrate?.(15);
+  Cam.shots++; const cnt = $('#camCount'); if (cnt) cnt.textContent = `${Cam.shots}枚`;
+  const sc = scanOf(S.scan);
+  // 保存と補正は裏で順番に（撮影は止めない）
+  Cam.queue = Cam.queue.then(async () => {
+    let corners = quad;
+    try{ if (corners) corners = refineQuad(full, corners); }catch{}
+    await addPhotoCanvas(sc, full, corners ? { corners, mids: null, profile: null, found: true } : null);
+  }).catch(e => { Diag.log('shoot', e); toast('保存できませんでした：' + (e.message || e)); });
+}
+
+/* ---------- フォルダの操作 ---------- */
+async function newFolder(open = true){
+  const name = await ask('input', { title: '新しいフォルダ', placeholder: '例：中央大 2026', ok: '作る' });
+  if (!name?.trim()) return null;
+  const f = { id: newId(), name: name.trim(), created: Date.now(), pages: [], cover: '' };
+  lib().folders.push(f); await Store.saveLib();
+  if (open) go('scan', { scan: f.id, pages: [], sel: new Set() }); else render();
+  return f;
+}
+async function openFolder(id){
+  const f = scanOf(id); if (!f) return;
+  go('scan', { scan: id, pages: [], sel: new Set() });
+  S.pages = await Store.loadPages(f).catch(() => []);
+  f.pages = f.pages.filter(pid => S.pages.some(p => p.id === pid));
+  S.pages.forEach((p, i) => p.n = i + 1);
+  render();
+}
+async function renumber(){
+  const sc = scanOf(S.scan); sc.pages = S.pages.map(p => p.id);
+  for (const [i, p] of S.pages.entries()) if (p.n !== i + 1){ p.n = i + 1; await Store.savePage(p); }
+  sc.cover = S.pages[0]?.img || ''; await Store.saveLib();
+}
+const selected = () => S.pages.filter(p => S.sel.has(p.id));
+
+/* ---------- タップの振り分け ---------- */
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const act = b.dataset.act, id = b.dataset.id;
+  if (act === 'sheetbg'){ if (e.target === b) closeSheet(null); return; }
+  if (act === 'sheetclose') return closeSheet(null);
+  if (act === 'sheetok') return closeSheet(S.sheet.kind === 'input' ? $('#sheetInput').value : true);
+  switch (act){
+    case 'back':
+      if (S.view === 'page'){ if (S.cropping && !S.review){ S.cropping = null; return render(); } S.review = false; return go('scan'); }
+      if (S.view === 'camera'){ closeCamera(); return go('scan'); }
+      return go('home');
+    case 'settings': return ask('settings', {});
+    case 'savesettings': {
+      const st = lib().settings; st.engine = document.querySelector('input[name=engine]:checked')?.value || 'auto';
+      st.tier = $('#tierHigh').checked ? 'complex' : 'default'; st.autofix = $('#autofix').checked; st.auto = $('#autoShot').checked;
+      const k = $('#apiKey').value.trim(); if (k) st.apiKey = k;
+      await Store.saveLib(); closeSheet(); return toast('保存しました');
+    }
+    case 'diag': {
+      S.sheet = null; let est = ''; try{ const e = await navigator.storage.estimate(); est = `${Math.round(e.usage / 1e6)}MB 使用 / 空き約${Math.round((e.quota - e.usage) / 1e6)}MB`; }catch{}
+      const text = `保存：${Store.mode === 'local' ? 'このiPhoneに保存' : 'できない'}　${est}
+カメラ：${navigator.mediaDevices?.getUserMedia ? '使える' : '使えない'}　APIキー：${lib().settings.apiKey ? 'あり' : 'なし'}
+読み取り方法：${{ auto: 'おまかせ', offline: 'オフラインだけ', claude: '全部Claude' }[lib().settings.engine] || ''}
+
+最近のエラー：
+${Diag.errors.length ? Diag.errors.join('\n') : 'なし'}
+
+${navigator.userAgent}`;
+      return ask('notice', { title: '動作の状態', text });
+    }
+    case 'checkclaude': {
+      S.sheet = null; toast('確認しています…');
+      try{
+        const r = await claudeCall('動作確認です。「OK」とだけ返してください。', [], { tier: 'quick', maxTokens: 20 });
+        return ask('notice', { title: 'Claudeとつながっています', text: `返事：${r.text.trim().slice(0, 40)}` });
+      }catch(e){ return ask('notice', { title: 'Claudeとつながっていません', text: errText(e) + '\n' + (HINT[e?.code] || '') }); }
+    }
+    case 'newfolder': return newFolder(true);
+    case 'openfolder': return openFolder(id);
+    case 'foldermenu': return ask('foldermenu', {});
+    case 'renamefolder': { const f = scanOf(S.scan); S.sheet = null; const n = await ask('input', { title: 'フォルダ名', value: f.name, ok: '変更' }); if (n?.trim()){ f.name = n.trim(); await Store.saveLib(); render(); } return; }
+    case 'delfolder': {
+      const f = scanOf(S.scan); S.sheet = null;
+      const ok = await ask('confirm', { title: `「${f.name}」を削除しますか？`, text: S.pages.length ? `中の${S.pages.length}枚の写真と文字もすべて消えます。元に戻せません。` : '空のフォルダを削除します。', ok: '削除', danger: true });
+      if (!ok) return;
+      for (const pg of S.pages){ await Store.deletePage(pg); Store.dropAsset(pg.orig); Store.dropAsset(pg.img); }
+      lib().folders = lib().folders.filter(x => x.id !== f.id); await Store.saveLib(); return go('home');
+    }
+    case 'pickfolder': return closeSheet(id);
+    case 'camera': return openCamera();
+    case 'shutter': return shoot();
+    case 'camdone': closeCamera(); await Cam.queue; return go('scan');
+    case 'camauto': lib().settings.auto = !lib().settings.auto; Store.saveLib(); $('#camAutoBtn').textContent = lib().settings.auto ? '自動 ON' : '自動 OFF'; return;
+    case 'campick': closeCamera(); go('scan'); return openPicker(false);
+    case 'addphoto': if (S.sheet) closeSheet(null); return openPicker(false);
+    case 'selall': S.sel = new Set(S.pages.map(p => p.id)); return render();
+    case 'selnone': S.sel = new Set(); return render();
+    case 'selmore': return ask('selmore', {});
+    case 'selocr': {
+      const list = selected();
+      if (list.some(p => p.edited)){ const ok = await ask('confirm', { title: '読み直しますか？', text: '手で編集したページは上書きされます。', ok: '読む' }); if (!ok) return; }
+      S.sel = new Set(); return runPages(list, 'read');
+    }
+    case 'selpdf': { const list = selected(); return exportPdf(list); }
+    case 'selexport': { const list = selected(); S.sheet = null; return ask('export', { list }); }
+    case 'selfilter': case 'selrot': {
+      const list = selected(); closeSheet(null);
+      for (const [i, pg] of list.entries()){
+        toast(`整えています… ${i + 1}/${list.length}`);
+        await reprocess(pg, act === 'selrot' ? { rotate: ((pg.rotate || 0) + 90) % 360 } : { filter: b.dataset.f }, true);
+      }
+      toast('変更しました'); return render();
+    }
+    case 'seldetect': {
+      const list = selected().filter(pg => pg.src !== 'pdf'); closeSheet(null); let miss = 0;
+      for (const [i, pg] of list.entries()){
+        toast(`四隅を探しています… ${i + 1}/${list.length}`);
+        const c = await assetCanvas(pg.orig), f = await findPage(c); freeCanvas(c);
+        if (!f){ miss++; continue; }
+        await reprocess(pg, { corners: f.corners, mids: f.mids, profile: f.profile || null }, true);
+      }
+      toast(miss ? `${miss}枚は紙の縁が見つかりませんでした。開いて「四隅を調整」で合わせてください` : '整え直しました'); return render();
+    }
+    case 'selmove': {
+      const list = selected(); S.sheet = null;
+      const r = await ask('pickfolder', { title: `${list.length}枚をどのフォルダへ？` }); if (!r) return;
+      const to = r === '__new' ? await newFolder(false) : scanOf(r); if (!to) return;
+      for (const pg of list){ pg.scan = to.id; pg.n = to.pages.length + 1; to.pages.push(pg.id); if (!to.cover) to.cover = pg.img; await Store.savePage(pg); }
+      S.pages = S.pages.filter(q => !S.sel.has(q.id)); S.sel = new Set(); await renumber();
+      toast(`「${to.name}」へ移しました`); return render();
+    }
+    case 'seldel': {
+      const list = selected(); S.sheet = null;
+      const ok = await ask('confirm', { title: `${list.length}枚を削除しますか？`, text: '写真と文字が消えます。元に戻せません。', ok: '削除', danger: true });
+      if (!ok) return;
+      for (const pg of list){ await Store.deletePage(pg); Store.dropAsset(pg.orig); Store.dropAsset(pg.img); }
+      S.pages = S.pages.filter(q => !S.sel.has(q.id)); S.sel = new Set(); await renumber(); return render();
+    }
+    case 'ocrrest': S.sheet = null; return runPages(S.pages.filter(p => p.status !== 'done'));
+    case 'openpage': {
+      if (Date.now() < suppressUntil) return;
+      if (S.sel.size){ S.sel.has(id) ? S.sel.delete(id) : S.sel.add(id); return render(); } // 選択中はタップで追加・解除
+      const pg = S.pages.find(p => p.id === id); return go('page', { page: pg, tab: pg?.tex ? 'text' : 'image' });
+    }
+    case 'pnav': { const i = S.pages.findIndex(p => p.id === S.page.id) + +b.dataset.d; if (S.pages[i]) go('page', { page: S.pages[i] }); return; }
+    case 'tab': S.tab = b.dataset.tab; S.cropping = null; return render();
+    case 'crop': S.cropping = cropFrom(S.page.corners || FULL, S.page.mids); S.cropProfile = S.page.profile || null; S.cropStart = JSON.stringify(S.cropping); return render();
+    case 'autocorner': { const c = await assetCanvas(S.page.orig); toast('四隅を探しています…'); const f = await findPage(c); freeCanvas(c); if (!f) toast('紙の縁を見つけられませんでした。指で合わせてください'); S.cropping = f ? cropFrom(f.corners, f.mids) : cropFrom(FULL); S.cropProfile = f?.profile || null; S.cropStart = JSON.stringify(S.cropping); return S._drawCrop?.(); }
+    case 'straight': S.cropping = cropFrom(S.cropping.slice(0, 4)); return S._drawCrop?.();
+    case 'fullcorner': S.cropping = cropFrom(FULL); return S._drawCrop?.();
+    case 'cropcancel': S.cropping = null; return render();
+    case 'cropdone': {
+      const review = S.review, next = b.dataset.next === '1'; S.review = false;
+      if (next) setTimeout(openCamera, 0);
+      const q = S.cropping, corners = q.slice(0, 4), mids = q.slice(4), sm = straightMids(corners);
+      const bent = mids.some((m, i) => Math.hypot(m[0] - sm[i][0], m[1] - sm[i][1]) > 0.004);
+      const untouched = JSON.stringify(q) === S.cropStart; // 自動検出の縁の形は、手で動かさなければそのまま使う
+      S.cropping = null;
+      if (review){
+        const pg = S.page; go('scan');
+        if (!untouched) await reprocess(pg, { corners, mids: bent ? mids : null, profile: null });
+        return;
+      }
+      return reprocess(S.page, { corners, mids: bent ? mids : null, profile: untouched ? S.cropProfile : null });
+    }
+    case 'rot': return reprocess(S.page, { rotate: ((S.page.rotate || 0) + +b.dataset.d + 360) % 360 });
+    case 'filter': lib().settings.filter = b.dataset.f; Store.saveLib(); return reprocess(S.page, { filter: b.dataset.f });
+    case 'movepage': {
+      const i = S.pages.findIndex(p => p.id === S.page.id), j = i + +b.dataset.d; if (j < 0 || j >= S.pages.length) return;
+      [S.pages[i], S.pages[j]] = [S.pages[j], S.pages[i]]; await renumber(); toast(`${S.page.n}ページ目にしました`); return render();
+    }
+    case 'delpage': {
+      const p = S.page; const ok = await ask('confirm', { title: `${p.n}ページを削除しますか？`, text: '写真と文字が消えます。元に戻せません。', ok: '削除', danger: true });
+      if (!ok) return; S.pages = S.pages.filter(q => q.id !== p.id); await Store.deletePage(p); Store.dropAsset(p.orig); Store.dropAsset(p.img); await renumber(); return go('scan');
+    }
+    case 'ocr': return runPages(S.pages.filter(p => p.status !== 'done'));
+    case 'readpage':
+      if (S.page.edited){ const ok = await ask('confirm', { title: '読み直しますか？', text: '手で編集した内容は上書きされます。', ok: '読み直す' }); if (!ok) return; }
+      return runPages([S.page], 'read');
+    case 'fixpage':
+      if (S.page.edited){ const ok = await ask('confirm', { title: '見直させますか？', text: '手で編集した内容は上書きされます。', ok: '見直す' }); if (!ok) return; }
+      return runPages([S.page], 'fix');
+    case 'stop': ctl?.abort(); return;
+    case 'edit': S.editing = !S.editing; if (!S.editing) await Store.savePage(S.page); return render();
+    case 'copypage': return copyText(S.page.tex || '');
+    case 'export': S.sheet = null; return ask('export', {});
+    case 'exppdf': return exportPdf();
+    case 'expzip': return exportZip();
+    case 'exptex': return exportTex();
+    case 'copyall': return copyText(buildTexDoc(exportList()));
+  }
+});
+
+/* ---------- 起動 ---------- */
+(async () => {
+  render();
+  await Store.init();
+  render();
+})();
+</script>
+
+<script>
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
