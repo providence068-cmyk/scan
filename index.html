@@ -149,6 +149,7 @@ window.MathJax = {
 };
 </script>
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js"></script>
+<script src="detector.js"></script>
 <script>
 "use strict";
 /* =====================================================================
@@ -187,13 +188,14 @@ const IDB = {
 };
 const Store = {
   mode: 'local',
-  lib: { folders: [], scans: [], settings: { tier: 'default', autofix: true, filter: 'scan', engine: 'auto', apiKey: '', auto: true } },
+  lib: { folders: [], scans: [], settings: { tier: 'default', autofix: true, filter: 'scan', engine: 'claude', apiKey: '', auto: true, autoOcr: true, hiRes: false } },
   urls: new Map(), loading: new Set(),
   async init(){
     try{
       await IDB.open();
       const v = await IDB.req('kv', 'readonly', s => s.get('library'));
       if (v) this.lib = { folders: v.folders || [], scans: [], settings: { ...this.lib.settings, ...(v.settings || {}) } };
+      if (this.lib.settings.engine === 'auto') this.lib.settings.engine = 'claude'; // 旧版の「おまかせ」→ Claude
       navigator.storage?.persist?.().catch(() => {}); // iPhoneが勝手に消さないようにお願いする
     }catch(e){ console.warn('idb', e); Diag.log('init', e); this.mode = 'memory'; }
   },
@@ -663,39 +665,36 @@ async function claudeCorners(canvas){
   return q.some(p => p.some(v => !isFinite(v))) ? null : q;
 }
 
-// 候補（色の塊／輪郭の直線）を本当の縁に吸い付かせ、いちばん点数の高いものを使う。
-// 戻り値の confidence が低ければ、呼び出し側で Claude に位置を聞く
+// ---- 四隅の検出（detector.js の新しい検出器を使う） ----
+function imgDataOf(canvas, side){
+  const s = Math.min(1, side / Math.max(canvas.width, canvas.height));
+  const c = makeCanvas(canvas.width * s, canvas.height * s), ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(canvas, 0, 0, c.width, c.height);
+  try{ return ctx.getImageData(0, 0, c.width, c.height); } finally { freeCanvas(c); }
+}
+const clampQ = q => q.map(([x, y]) => [Math.min(1, Math.max(0, x)), Math.min(1, Math.max(0, y))]);
+// 撮った写真の解像度で、四隅を正確に合わせ直す
+function refineQuad(canvas, corners){
+  try{ const r = DocDetect.detect(imgDataOf(canvas, 960), corners, { refineOnly: true, range: 0.02, ang: 2, push: false }); return clampQ(r ? r.quad : corners); }
+  catch{ return corners; }
+}
 function detectPage(canvas){
-  let sc; try{ sc = prepScene(canvas); }catch(e){ return null; }
-  const cands = [];
-  try{ const r = detectByRegion(canvas); if (r) cands.push({ ...r, kind: 'region' }); }catch(e){ console.warn('region', e); }
-  try{ const e = detectByEdges(canvas); if (e) cands.push({ corners: e.corners, mids: null, profile: null, kind: 'edges' }); }catch(e){ console.warn('edges', e); }
-  let best = null;
-  for (const c of cands){ // そのままの形と、縁に吸い付かせた形の両方を採点
-    const refined = refineQuad(canvas, c.corners, sc);
-    const moved = Math.max(...refined.map((p, i) => Math.hypot(p[0] - c.corners[i][0], p[1] - c.corners[i][1])));
-    for (const cand of moved > 0.004 ? [c, { corners: refined, mids: null, profile: null, kind: c.kind + '+snap' }] : [c]){
-      const q = quadScore(sc, cand.corners.map(([x, y]) => [x * (sc.w - 1), y * (sc.h - 1)]));
-      if (!best || q.score > best.confidence) best = { ...cand, confidence: q.score };
-    }
-  }
-  return best;
+  const r = DocDetect.detect(imgDataOf(canvas, 360));
+  if (!r) return null;
+  return { corners: refineQuad(canvas, r.quad), mids: null, profile: null, confidence: r.score, kind: r.kind };
 }
 // 取り込み時に使う：自前の検出で自信がないときだけ Claude に聞いて、仕上げに縁へ吸い付かせる
 async function findPage(canvas, { allowClaude = true } = {}){
   const local = detectPage(canvas);
-  if (local && local.confidence >= 0.42) return local;
-  if (!allowClaude || !lib().settings.apiKey) return local && local.confidence >= 0.25 ? local : null;
-  try{
-    toast('Claudeに紙の位置を探してもらっています…');
-    const rough = await claudeCorners(canvas);
-    if (rough){
-      const sc = prepScene(canvas), refined = refineQuad(canvas, rough, sc);
-      const q = quadScore(sc, refined.map(([x, y]) => [x * (sc.w - 1), y * (sc.h - 1)]));
-      if (!local || q.score >= local.confidence * 0.9) return { corners: refined, mids: null, profile: null, confidence: q.score, kind: 'claude' };
-    }
-  }catch(e){ console.warn('claude corners', e); }
-  return local && local.confidence >= 0.25 ? local : null;
+  if (local && local.confidence >= 0.35) return local;
+  if (allowClaude && lib().settings.apiKey && lib().settings.engine !== 'offline'){
+    try{
+      toast('Claudeに紙の位置を探してもらっています…');
+      const rough = await claudeCorners(canvas);
+      if (rough) return { corners: refineQuad(canvas, rough), mids: null, profile: null, confidence: 0.5, kind: 'claude' };
+    }catch(e){ console.warn('claude corners', e); }
+  }
+  return local && local.confidence >= 0.15 ? local : null;
 }
 const FULL = [[0,0],[1,0],[1,1],[0,1]];
 const straightMids = q => [[(q[0][0] + q[1][0]) / 2, (q[0][1] + q[1][1]) / 2], [(q[3][0] + q[2][0]) / 2, (q[3][1] + q[2][1]) / 2]];
@@ -1069,9 +1068,10 @@ async function offlineRead(canvas, onProgress){
   onProgress?.('オフラインで読み取り中…');
   try{
     const { data } = await w.recognize(c);
-    // 日本語の文字の間に入る余計な空白を取る
-    const text = (data.text || '').split('\n').map(l => l.replace(/(?<=[^\x00-\x7F])\s+(?=[^\x00-\x7F])/g, '').trimEnd()).join('\n').replace(/\n{3,}/g, '\n\n');
-    return { text, conf: data.confidence ?? 0 };
+    // 行ごとの位置つきで返す。日本語の文字の間に入る余計な空白は取る
+    const clean = t => (t || '').replace(/(?<=[^\x00-\x7F])\s+(?=[^\x00-\x7F])/g, '').trim();
+    const rows = (data.lines || []).map(l => ({ box: [l.bbox.x0 / c.width, l.bbox.y0 / c.height, l.bbox.x1 / c.width, l.bbox.y1 / c.height], text: clean(l.text) })).filter(r => r.text);
+    return { rows, conf: data.confidence ?? 0 };
   } finally { freeCanvas(c); }
 }
 // 数式が含まれていそうか（オフライン結果を Claude に回すかどうかの目安）
@@ -1276,13 +1276,24 @@ async function buildPdf(pages){
   put(FONT, [`<< /Type /Font /Subtype /Type0 /BaseFont /HeiseiKakuGo-W5-UniJIS-UCS2-H /Encoding /UniJIS-UCS2-H /DescendantFonts [${CID} 0 R] >>`]);
   put(CID, [`<< /Type /Font /Subtype /CIDFontType0 /BaseFont /HeiseiKakuGo-W5 /CIDSystemInfo << /Registry (Adobe) /Ordering (Japan1) /Supplement 2 >> /FontDescriptor ${DESC} 0 R /DW 1000 /W [1 95 500 231 389 500] >>`]);
   put(DESC, [`<< /Type /FontDescriptor /FontName /HeiseiKakuGo-W5 /Flags 4 /FontBBox [-92 -250 1010 922] /ItalicAngle 0 /Ascent 752 /Descent -221 /CapHeight 737 /StemV 114 >>`]);
-  for (const { canvas, md } of pages){
+  for (const { canvas, md, rows } of pages){
     const w = canvas.width, h = canvas.height, pw = (w * PX2PT).toFixed(2), ph = (h * PX2PT).toFixed(2);
     const jpg = new Uint8Array(await (await toBlob(canvas, .8)).arrayBuffer());
     const IMG = reserve(), CONTENT = reserve(), PAGE = reserve();
     put(IMG, [`<< /Type /XObject /Subtype /Image /Width ${w} /Height ${h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpg.length} >>\nstream\n`, jpg, '\nendstream']);
     let cs = `q ${pw} 0 0 ${ph} 0 0 cm /Im0 Do Q\n`;
-    const lines = mdToLines(md);
+    if (rows?.length){ // 行の位置が分かっている：その位置にぴったり重ねる
+      cs += 'BT 3 Tr\n';
+      for (const r of rows){
+        const ln = plainText(r.text); if (!ln) continue;
+        const x0 = r.box[0] * w, y0 = r.box[1] * h, x1 = r.box[2] * w, y1 = r.box[3] * h, bh = y1 - y0;
+        const size = Math.max(3, bh * 0.82 * PX2PT), target = Math.max(8, (x1 - x0) * PX2PT);
+        const tz = Math.max(10, Math.min(500, 100 * target / (textW(ln) * size || 1)));
+        cs += `/F1 ${size.toFixed(2)} Tf ${tz.toFixed(1)} Tz 1 0 0 1 ${(x0 * PX2PT).toFixed(2)} ${((h - y1 + bh * 0.12) * PX2PT).toFixed(2)} Tm <${utf16hex(ln)}> Tj\n`;
+      }
+      cs += 'ET\n';
+    }
+    const lines = rows?.length ? [] : mdToLines(md);
     if (lines.length){
       let bands = lineBands(canvas); const n = lines.length;
       if (!bands.length) bands = lines.map((_, i) => [w * .08, h * (.05 + .9 * i / n), w * .92, h * (.05 + .9 * (i + .8) / n)]);
@@ -1342,7 +1353,7 @@ const S = { view: 'home', folder: null, scan: null, pages: [], page: null, tab: 
 const lib = () => Store.lib;
 const folderOf = id => lib().folders.find(f => f.id === id);
 const scanOf = id => lib().folders.find(f => f.id === id); // フォルダが写真・PDFのページを直接持つ
-const STATUS = { new: ['未読取', ''], reading: ['読取中', 'run'], fixing: ['見直し中', 'run'], done: ['完了', 'ok'], error: ['エラー', 'err'] };
+const STATUS = { queued: ['順番待ち', 'run'], new: ['未読取', ''], reading: ['読取中', 'run'], fixing: ['見直し中', 'run'], done: ['完了', 'ok'], error: ['エラー', 'err'] };
 const chip = p => { const [t, c] = STATUS[p.status] || STATUS.new; return p.status === 'done' && p.issues?.length ? '<span class="chip warn">要確認</span>' : `<span class="chip ${c}">${t}</span>`; };
 
 function go(view, extra = {}){ if (view !== 'camera' && Cam.stream) closeCamera(); Object.assign(S, { view, editing: false, cropping: null }, extra); if (view !== 'scan' && view !== 'page') S.sel = new Set(); render(); window.scrollTo(0, 0); }
@@ -1374,7 +1385,7 @@ function render(){
     if (S.busy?.scan === S.scan) html += `<div class="progress"><i style="width:${Math.round(100 * S.busy.done / S.busy.total)}%"></i></div><div class="note">${esc(S.busy.label)}</div>`;
     else html += `<div class="note">${ps.length ? `${ps.length}枚・文字化済み ${done}　｜　横になぞると選択、タップで開く` : ''}</div>`;
     html += ps.length ? `<div class="grid" id="grid">${ps.map(pg => {
-        const dot = pg.status === 'reading' || pg.status === 'fixing' ? 'run' : pg.status === 'error' ? 'err' : pg.status === 'done' ? (pg.issues?.length ? 'warn' : 'ok') : '';
+        const dot = pg.status === 'reading' || pg.status === 'fixing' || pg.status === 'queued' ? 'run' : pg.status === 'error' ? 'err' : pg.status === 'done' ? (pg.issues?.length ? 'warn' : 'ok') : '';
         return `<button class="tile${S.sel.has(pg.id) ? ' picked' : ''}" data-act="openpage" data-id="${pg.id}" aria-label="${pg.n}枚目" aria-pressed="${S.sel.has(pg.id)}"><img src="${Store.url(pg.img)}" alt="" draggable="false">${dot ? `<span class="dot ${dot}"></span>` : ''}<span class="check" aria-hidden="true"></span></button>`;
       }).join('')}</div>`
       : `<div class="list" style="margin-top:14px"><div class="empty">「撮影」でページを撮るか、「写真・PDF」でアルバムの写真やPDFファイルを入れます。<br>紙の四隅は自動で見つけて、まっすぐ・白く整えます。</div></div>
@@ -1603,18 +1614,18 @@ function sheetHtml(){
   if (s.kind === 'settings'){
     const st = lib().settings;
     body = `<h2>設定</h2>
-      <div class="note" style="margin:0">読み取り方法</div>
-      <label class="opt"><input type="radio" name="engine" value="auto" ${st.engine === 'auto' ? 'checked' : ''}><span>おまかせ（おすすめ）<small>まずiPhoneの中でオフライン読み取り。数式がありそうなページ・読みにくいページだけClaudeが仕上げます。</small></span></label>
-      <label class="opt"><input type="radio" name="engine" value="offline" ${st.engine === 'offline' ? 'checked' : ''}><span>オフラインだけ（無料）<small>ネットも費用も不要。ふつうの文章向け。数式はTeXになりません。</small></span></label>
-      <label class="opt"><input type="radio" name="engine" value="claude" ${st.engine === 'claude' ? 'checked' : ''}><span>全部Claude（最高精度）<small>数式・表もきれいに。1ページ数円ほど。</small></span></label>
+      <div class="note" style="margin:0">文字の読み取り方</div>
+      <label class="opt"><input type="radio" name="engine" value="claude" ${st.engine === 'claude' ? 'checked' : ''}><span>Claude・精度重視（おすすめ）<small>日本語・数式・表まで正確。1ページ10〜30秒（文字量による）、約2〜5円。3ページずつ同時に読みます。</small></span></label>
+      <label class="opt"><input type="radio" name="engine" value="fast" ${st.engine === 'fast' ? 'checked' : ''}><span>Claude・速さ重視<small>1ページ3〜10秒、約0.3円。ふつうの文章なら十分な精度。</small></span></label>
+      <label class="opt"><input type="radio" name="engine" value="offline" ${st.engine === 'offline' ? 'checked' : ''}><span>オフライン（無料）<small>APIキー不要・外に送らない。精度はかなり落ち、数式は読めません。</small></span></label>
       <label class="stack">ClaudeのAPIキー（console.anthropic.com で発行。このiPhoneの中だけに保存）
         <input type="password" id="apiKey" placeholder="${st.apiKey ? '保存済み（変える時だけ入力）' : 'sk-ant-...'}" autocomplete="off"></label>
-      <label class="opt"><input type="checkbox" id="tierHigh" ${st.tier === 'complex' ? 'checked' : ''}><span>Claudeを高精度モデルにする<small>細かい数式が多いページ向け。時間と費用が増えます。</small></span></label>
-      <label class="opt"><input type="checkbox" id="autofix" ${st.autofix ? 'checked' : ''}><span>怪しいページは自動で見直す</span></label>
-      <label class="opt"><input type="checkbox" id="autoShot" ${st.auto ? 'checked' : ''}><span>紙を見つけたら自動で撮影<small>カメラで紙が1秒ほど止まると、自動でシャッターを切ります。</small></span></label>
+      <label class="opt"><input type="checkbox" id="autoOcr" ${st.autoOcr ? 'checked' : ''}><span>撮ったらすぐ文字化する<small>撮影中から裏で読み始めるので、撮り終わる頃には文字ができています。</small></span></label>
+      <label class="opt"><input type="checkbox" id="hiRes" ${st.hiRes ? 'checked' : ''}><span>細かい文字モード<small>ページを上下に分けて送り、小さい字や細かい数式まで読みます。時間と費用は約2倍。</small></span></label>
+      <label class="opt"><input type="checkbox" id="autoShot" ${st.auto ? 'checked' : ''}><span>紙を見つけたら自動で撮影<small>紙が0.5秒ほど止まると、自動でシャッターを切ります。</small></span></label>
       <button class="btn" data-act="checkclaude">Claudeとの接続を確認</button>
       <button class="btn" data-act="diag">動作の状態を見る</button>
-      <div class="note">Claudeを使うページは画像がAnthropicに送られます。生徒の個人情報が写ったものは「オフラインだけ」で読んでください。</div>
+      <div class="note">Claudeで読むページは画像がAnthropicに送られます。生徒の個人情報が写ったものは「オフライン」で読んでください。</div>
       <div class="btns"><button class="btn" data-act="sheetclose">閉じる</button><button class="btn primary" data-act="savesettings">保存</button></div>`;
   }
   return `<div class="sheet-bg" data-act="sheetbg"><div class="sheet" role="dialog">${body}</div></div>`;
@@ -1654,11 +1665,11 @@ async function onFiles(files, fromCamera){
     try{
       if (isPdf(list[i])){
         toast('PDFを開いています…');
-        await pdfPages(list[i], async (c, k, n) => { toast(`PDFを取り込み中… ${k}/${n}ページ`); lastAdded = await addPhotoCanvas(sc, c, null, true); added++; });
+        await pdfPages(list[i], async (c, k, n) => { toast(`PDFを取り込み中… ${k}/${n}ページ`); lastAdded = await addPhotoCanvas(sc, c, null, true); added++; autoRead(lastAdded); });
       } else {
         toast(`取り込み中… ${i + 1}/${list.length}`);
         let c; try{ c = await fileToCanvas(list[i]); }catch(e){ e.stage = '写真の読み込み'; throw e; }
-        lastAdded = await addPhotoCanvas(sc, c, undefined); added++;
+        lastAdded = await addPhotoCanvas(sc, c, undefined); added++; autoRead(lastAdded);
       }
     }catch(e){ console.error(e); Diag.log('import:' + (e.stage || ''), e); failure = failure || e; }
   }
@@ -1691,73 +1702,283 @@ async function reprocess(p, changes, quiet){
   if (!quiet) render();
 }
 
-/* ---------- 文字起こし ---------- */
-let ctl = null;
-// mode: 'read' | 'fix'。読み取り方法（設定）: auto＝まずオフライン→数式や読みにくいページだけClaude / claude / offline
-async function readPage(p, mode){
-  const canvas = await assetCanvas(p.img);
-  const st = lib().settings, tier = st.tier || 'default', hasKey = !!st.apiKey;
-  const engine = mode === 'fix' ? 'claude' : (st.engine || 'auto');
-  const show = (label, live) => { p.status = label; p.live = live || ''; p.error = ''; if (S.page?.id === p.id) render(); const el = $('#live'); if (el) el.textContent = p.live; };
-  let imgs = null; const halves = canvas.height > canvas.width * 1.15 ? 2 : 1;
-  const claude = async (prompt, label) => {
-    if (!imgs) imgs = await pageImagesForClaude(canvas);
-    show(label, label === 'fixing' ? 'Claudeが画像と照合して見直しています…' : 'Claudeが読み取っています…');
-    const r = await claudeCall(prompt, imgs, { tier, signal: ctl.signal,
-      onText: ({ text }) => { p.live = text.replace(/^[\s\S]*?<result>\s*/, ''); const el = $('#live'); if (el && S.page?.id === p.id) el.textContent = p.live; } });
-    return { md: pickResult(r.text), truncated: r.truncated, by: 'claude' };
-  };
-  let res;
-  try{
-    if (mode === 'fix') res = await claude(promptFix(halves, p.md || '', p.issues || []), 'fixing');
-    else if (engine === 'claude') res = await claude(promptRead(halves), 'reading');
-    else {
-      show('reading', 'オフラインで読み取り中…');
-      const off = await offlineRead(canvas, m => { const el = $('#live'); if (el && S.page?.id === p.id) el.textContent = m; S.busy && (S.busy.sub = m); });
-      res = { md: off.text.trim() + '\n', truncated: false, by: 'offline', conf: off.conf };
-      // 自動：数式がありそう・読み取りの自信が低いページだけ Claude で仕上げる
-      if (engine === 'auto' && hasKey && (off.conf < 80 || looksMathy(off.text))){
-        res = await claude(promptFix(halves, res.md, ['オフラインOCRの下書きです。数式はLaTeXに、表はHTMLの表に直してください']), 'fixing');
-        res.by = 'offline+claude';
+/* ---------- 文字起こし ----------
+   しくみ（Claude）：ページの「文字の行」の位置をアプリ側で先に測り、左の余白に行番号を書き込んだ画像を送る。
+   Claude は番号ごとの文字を返すので、文字付きPDFでは文字がその行の位置にぴったり重なる。
+   ページは3枚ずつ同時に読む。撮影した直後から裏で読み始める（設定で切り替え）。 */
+const OQ = { q: [], running: 0, ctl: new AbortController() };
+function oqAdd(p, mode = 'read'){
+  if (p._q) return p._q;
+  p.status = 'queued'; p.error = '';
+  p._q = new Promise(res => OQ.q.push({ p, mode, res }));
+  scheduleRender(); oqPump();
+  return p._q;
+}
+function oqPump(){
+  const max = lib().settings.engine === 'offline' ? 1 : 3;
+  while (OQ.running < max && OQ.q.length){
+    const job = OQ.q.shift(); OQ.running++;
+    (async () => {
+      let err = null;
+      try{ await readPage(job.p, job.mode); }
+      catch(e){
+        err = e;
+        if (e?.code === 'cancelled'){ job.p.status = job.p.tex ? 'done' : 'new'; }
+        else { console.error('read failed', e); Diag.log('read', e); job.p.status = job.p.tex ? 'done' : 'error'; job.p.error = errText(e); await Store.savePage(job.p); }
+        delete job.p.live;
+        // キーがない・通信できないなどは、残りも同じなので止める
+        if (['no_key', 'network', 'http_401', 'http_403'].includes(e?.code)) oqStop(e);
+      } finally {
+        OQ.running--; delete job.p._q; job.res(err); scheduleRender(); oqPump();
+      }
+    })();
+  }
+}
+function oqStop(reason = { code: 'cancelled' }){
+  OQ.ctl.abort(); OQ.ctl = new AbortController();
+  for (const j of OQ.q){ j.p.status = j.p.tex ? 'done' : 'new'; delete j.p._q; j.res(reason); }
+  OQ.q = []; scheduleRender();
+}
+const ocrPending = () => OQ.q.length + OQ.running;
+
+// ---- 文字の行を見つける（文字1つ1つの塊 → 横に並んだものを1行にまとめる） ----
+// 戻り値：[[x0,y0,x1,y1], …]（0〜1）。読む順（上から、同じ高さなら左から）
+function findTextLines(canvas){
+  const S0 = Math.min(1, 1500 / Math.max(canvas.width, canvas.height));
+  const w = Math.round(canvas.width * S0), h = Math.round(canvas.height * S0), n = w * h;
+  const c = makeCanvas(w, h), ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(canvas, 0, 0, w, h);
+  const d = ctx.getImageData(0, 0, w, h).data; freeCanvas(c);
+  const g = new Float32Array(n);
+  for (let i = 0, k = 0; i < n; i++, k += 4) g[i] = d[k] * 0.3 + d[k + 1] * 0.59 + d[k + 2] * 0.11;
+  // 1) まわりより暗いところ＝文字（積分画像で周囲の平均をとる）
+  const ii = new Float64Array((w + 1) * (h + 1));
+  for (let y = 0; y < h; y++){ let row = 0; for (let x = 0; x < w; x++){ row += g[y * w + x]; ii[(y + 1) * (w + 1) + x + 1] = ii[y * (w + 1) + x + 1] + row; } }
+  const R = Math.max(8, Math.round(Math.max(w, h) / 45)), ink = new Uint8Array(n);
+  for (let y = 0; y < h; y++){
+    const y0 = Math.max(0, y - R), y1 = Math.min(h, y + R + 1);
+    for (let x = 0; x < w; x++){
+      const x0 = Math.max(0, x - R), x1 = Math.min(w, x + R + 1);
+      const m = (ii[y1 * (w + 1) + x1] - ii[y0 * (w + 1) + x1] - ii[y1 * (w + 1) + x0] + ii[y0 * (w + 1) + x0]) / ((y1 - y0) * (x1 - x0));
+      const v = g[y * w + x];
+      if (v < m - Math.max(14, m * 0.14) && v < 215) ink[y * w + x] = 1;
+    }
+  }
+  // 2) 長い罫線・枠線は文字ではないので消す
+  const longH = Math.round(w * 0.06), longV = Math.round(h * 0.035);
+  for (let y = 0; y < h; y++){ let s = -1; for (let x = 0; x <= w; x++){ const on = x < w && ink[y * w + x]; if (on && s < 0) s = x; if (!on && s >= 0){ if (x - s > longH) for (let k = s; k < x; k++) ink[y * w + k] = 2; s = -1; } } }
+  for (let x = 0; x < w; x++){ let s = -1; for (let y = 0; y <= h; y++){ const on = y < h && ink[y * w + x] === 1; if (on && s < 0) s = y; if (!on && s >= 0){ if (y - s > longV) for (let k = s; k < y; k++) ink[k * w + x] = 2; s = -1; } } }
+  // 3) 文字の塊（つながった黒い部分）
+  const lab = new Int32Array(n), st = new Int32Array(n), comps = [];
+  let L = 0;
+  for (let s = 0; s < n; s++){
+    if (ink[s] !== 1 || lab[s]) continue;
+    L++; let top = 0; st[top++] = s; lab[s] = L;
+    let x0 = w, y0 = h, x1 = 0, y1 = 0, cnt = 0;
+    while (top){
+      const p = st[--top], x = p % w, y = (p / w) | 0; cnt++;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++){
+        const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+        const q = yy * w + xx; if (ink[q] === 1 && !lab[q]){ lab[q] = L; st[top++] = q; }
       }
     }
-    if (mode !== 'fix' && engine === 'claude' && st.autofix){
-      const issues = checkMd(res.md, res.truncated);
-      if (issues.length) res = await claude(promptFix(halves, res.md, issues), 'fixing');
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    if (bh < h * 0.0025 && bw < h * 0.0025) continue;           // 点・ゴミ
+    if (bh > h * 0.06 || bw > w * 0.12) continue;               // 図・写真・大きな模様
+    if (cnt > bw * bh * 0.85 && bw > 6 && bh > 6) continue;     // べた塗りの四角
+    comps.push({ x0, y0, x1, y1, cy: (y0 + y1) / 2, h: bh });
+  }
+  if (!comps.length) return [];
+  // 罫線・枠のかけら（細長すぎるもの）を除く
+  { const hs0 = comps.map(c => c.h).sort((a, b) => a - b), m0 = hs0[Math.floor(hs0.length * 0.6)] || 10;
+    for (let i = comps.length - 1; i >= 0; i--){
+      const c0 = comps[i], bw = c0.x1 - c0.x0 + 1, bh = c0.h;
+      if ((bh > bw * 4 && bh > m0 * 1.8) || (bw > bh * 5 && bh < m0 * 0.45)) comps.splice(i, 1);
+    } }
+  if (!comps.length) return [];
+  // 4) 横に並んだ塊を1行にまとめる（高さが重なり、間があきすぎていないもの）
+  comps.sort((a, b) => a.x0 - b.x0);
+  const par = comps.map((_, i) => i), find = i => { while (par[i] !== i){ par[i] = par[par[i]]; i = par[i]; } return i; };
+  const hs = comps.map(c => c.h).sort((a, b) => a - b), mh = hs[Math.floor(hs.length * 0.6)] || 10;
+  for (let i = 0; i < comps.length; i++){
+    const a = comps[i];
+    for (let j = i + 1; j < comps.length; j++){
+      const b = comps[j];
+      if (b.x0 - a.x1 > Math.max(a.h, b.h, mh) * 1.6) break;      // x順なので、ここから先は遠い
+      const ov = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+      if (ov > Math.min(a.h, b.h) * 0.45 || (Math.abs(a.cy - b.cy) < mh * 0.35)) par[find(i)] = find(j);
+    }
+  }
+  const groups = new Map();
+  comps.forEach((c, i) => { const r = find(i); const g2 = groups.get(r); if (!g2) groups.set(r, { x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, k: 1, area: (c.x1 - c.x0) * (c.y1 - c.y0) });
+    else { g2.x0 = Math.min(g2.x0, c.x0); g2.y0 = Math.min(g2.y0, c.y0); g2.x1 = Math.max(g2.x1, c.x1); g2.y1 = Math.max(g2.y1, c.y1); g2.k++; } });
+  const ex = w * 0.025, ey = h * 0.02; // 紙の縁ぎわに残った線のかけらは除く
+  let lines = [...groups.values()].filter(l => (l.k >= 2 || (l.y1 - l.y0) > mh * 0.8) && (l.y1 - l.y0) > mh * 0.4
+    && !((l.x1 < ex || l.x0 > w - ex || l.y1 < ey || l.y0 > h - ey) && (l.x1 - l.x0) < (l.y1 - l.y0) * 3));
+  // 上下にほぼ重なる行（ルビ・上付き）はまとめる
+  lines.sort((a, b) => a.y0 - b.y0);
+  const merged = [];
+  for (const l of lines){
+    const m = merged.find(o => Math.min(o.x1, l.x1) - Math.max(o.x0, l.x0) > Math.min(o.x1 - o.x0, l.x1 - l.x0) * 0.5 && Math.min(o.y1, l.y1) - Math.max(o.y0, l.y0) > Math.min(o.y1 - o.y0, l.y1 - l.y0) * 0.5);
+    if (m){ m.x0 = Math.min(m.x0, l.x0); m.y0 = Math.min(m.y0, l.y0); m.x1 = Math.max(m.x1, l.x1); m.y1 = Math.max(m.y1, l.y1); }
+    else merged.push({ ...l });
+  }
+  // 5) 読む順：高さが重なる行どうしを「段」にして、段の中は左から
+  merged.sort((a, b) => (a.y0 + a.y1) - (b.y0 + b.y1));
+  const bands = [];
+  for (const l of merged){
+    const cy = (l.y0 + l.y1) / 2, b = bands[bands.length - 1], lh = l.y1 - l.y0;
+    // 同じ段：その行の高さの半分以上が、段の中心の行と重なる
+    const ov = b ? Math.min(b.c1, l.y1) - Math.max(b.c0, l.y0) : 0;
+    if (b && ov > Math.min(lh, b.c1 - b.c0) * 0.5) { b.items.push(l); }
+    else bands.push({ c0: l.y0, c1: l.y1, items: [l] });
+  }
+  const pad = Math.max(1, mh * 0.15), out = [];
+  for (const b of bands) for (const l of b.items.sort((p, q) => p.x0 - q.x0))
+    out.push([Math.max(0, l.x0 - pad) / w, Math.max(0, l.y0 - pad) / h, Math.min(w, l.x1 + pad) / w, Math.min(h, l.y1 + pad) / h]);
+  return out;
+}
+
+// ページの「文字の行」の位置（0〜1）。読む順
+function textRows(canvas){
+  let b = findTextLines(canvas);
+  if (b.length > 220) b = b.slice(0, 220); // 極端に多いときは打ち切り（残りは近い番号に入る）
+  return b;
+}
+// 各行の左に赤い番号をつけた画像（Claude用）。part: [上端, 下端]（0〜1）
+async function annotated(canvas, rows, part = [0, 1], maxSide = 1568){
+  const y0 = part[0] * canvas.height, y1 = part[1] * canvas.height, ch = y1 - y0;
+  const margin = Math.round(canvas.width * 0.05);
+  const s = Math.min(1, maxSide / Math.max(canvas.width + margin, ch));
+  const c = makeCanvas((canvas.width + margin) * s, ch * s), ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(canvas, 0, y0, canvas.width, ch, margin * s, 0, canvas.width * s, ch * s);
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  rows.forEach((r, i) => {
+    const cy = ((r[1] + r[3]) / 2 * canvas.height - y0) * s; if (cy < -4 || cy > c.height + 4) return;
+    const fs = Math.max(9, Math.min(16, (r[3] - r[1]) * canvas.height * s * 0.75));
+    ctx.font = `bold ${fs}px -apple-system, Helvetica, sans-serif`;
+    const label = String(i + 1), tw = ctx.measureText(label).width;
+    const xr = (margin + r[0] * canvas.width) * s - 2;
+    ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.fillRect(xr - tw - 2, cy - fs * 0.6, tw + 3, fs * 1.2);
+    ctx.fillStyle = '#d0021b'; ctx.fillText(label, xr, cy);
+  });
+  try{ return await toBlob(c, .9); } finally { freeCanvas(c); }
+}
+const ROWS_RULES = `- 数式は LaTeX にして $...$ で囲む（例：$\\frac{1}{2}$, $x^2+1$, $\\sqrt{3}$, $\\int_0^1 f(x)\\,dx$）。その行全体が数式なら $$...$$。
+- 表の行は、セルを「 | 」で区切って1行に書く。
+- 見出しや問題番号もそのまま書く（(1)、【問題1】など）。ふりがな（ルビ）は書かない。
+- 文字がない番号（図・写真・線だけ）は "" にする。
+- 1つの番号のまとまりに文字の行が2つ以上あるときは、上から順に1つにつなぐ。番号のない所の文字は、いちばん近い番号に入れる。
+- 番号は読む順についていますが、ずれていても気にせず、番号の右にある文字をそのまま書く。
+- 画像にないことは書かない。読めない文字は〓にする。説明や感想は書かない。`;
+function promptRows(n, twoImages){
+  return `あなたは日本語の文書を正確に書き起こす専門家です。${twoImages ? '画像は同じ1ページを上下に分けたものです（真ん中あたりは両方に写っています）。' : '画像はスキャンした1ページです。'}
+各行の左についている小さな赤い数字は、その右に続く文字のまとまり（1行）の番号です（1〜${n}）。番号ごとに、その右側に書かれている文字を正確に書き起こしてください。
+${ROWS_RULES}
+返事は次の形の JSON だけにしてください：{"rows": {"1": "…", "2": "…", …, "${n}": "…"}}`;
+}
+function promptRowsFix(n, twoImages, draft, issues){
+  return promptRows(n, twoImages) + `
+
+前回の書き起こし（下書き）があります。画像と1行ずつ照合して、誤り（誤字・数式の読み違い・抜け・行のずれ）を直してください。正しい行は変えないこと。
+${issues?.length ? '自動チェックで見つかった問題：' + issues.join('、') + '\n' : ''}<draft>
+${JSON.stringify({ rows: Object.fromEntries(draft.map((r, i) => [String(i + 1), r.text])) })}
+</draft>`;
+}
+function parseRows(text, n){
+  const a = text.indexOf('{'), b = text.lastIndexOf('}');
+  if (a < 0 || b < a) throw { code: 'bad_json', message: '返事を読み取れませんでした' };
+  let j; try{ j = JSON.parse(text.slice(a, b + 1)); }catch{ throw { code: 'bad_json', message: '返事を読み取れませんでした' }; }
+  const rows = j.rows || j;
+  return Array.from({ length: n }, (_, i) => String(rows[String(i + 1)] ?? rows[i + 1] ?? '').trim());
+}
+// 行（番号つき）→ Markdown（TeX変換用）。行間が広いところで段落を分け、「 | 」の行は表にする
+function rowsToMd(rows){
+  const hs = rows.map(r => r.box[3] - r.box[1]).sort((a, b) => a - b), mh = hs[hs.length >> 1] || 0.02;
+  const out = []; let prev = null, table = [];
+  const flush = () => {
+    if (!table.length) return;
+    out.push('<table>' + table.map(r => '<tr>' + r.split('|').map(c => `<td>${esc(c.trim())}</td>`).join('') + '</tr>').join('') + '</table>', '');
+    table = [];
+  };
+  for (const r of rows){
+    const t = r.text.trim(); if (!t){ continue; }
+    if (prev && r.box[1] - prev.box[3] > mh * 0.9){ flush(); out.push(''); }
+    if (/\S\s\|\s\S/.test(t) && !/^\$\$/.test(t)) table.push(t);
+    else { flush(); out.push(t); }
+    prev = r;
+  }
+  flush();
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+}
+// 検索・コピー用のふつうの文字（LaTeX を読みやすい形に）
+const TEX_SYM = { cdot: '·', times: '×', div: '÷', pm: '±', le: '≤', leq: '≤', ge: '≥', geq: '≥', ne: '≠', neq: '≠', infty: '∞', pi: 'π', theta: 'θ', alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', Delta: 'Δ', omega: 'ω', lambda: 'λ', mu: 'μ', sigma: 'σ', Sigma: 'Σ', to: '→', rightarrow: '→', Rightarrow: '⇒', Leftrightarrow: '⇔', int: '∫', sum: 'Σ', prod: 'Π', angle: '∠', triangle: '△', circ: '°', degree: '°', therefore: '∴', because: '∵', in: '∈', subset: '⊂', cup: '∪', cap: '∩', ldots: '…', cdots: '…', quad: ' ', qquad: '  ', ',': ' ', ';': ' ', '!': '' };
+function plainText(s){
+  let t = s.replace(/\$\$?/g, '').replace(/\\\(|\\\)|\\\[|\\\]/g, '');
+  for (let k = 0; k < 4; k++){
+    t = t.replace(/\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, '($1)/($2)')
+         .replace(/\\sqrt\s*\[([^\]]*)\]\s*\{([^{}]*)\}/g, '$1√($2)').replace(/\\sqrt\s*\{([^{}]*)\}/g, '√($1)')
+         .replace(/\\(?:overrightarrow|vec|overline|bar|hat|mathrm|mathbf|bm|text|textbf|operatorname)\s*\{([^{}]*)\}/g, '$1')
+         .replace(/\^\{([^{}]*)\}/g, '^$1').replace(/_\{([^{}]*)\}/g, '_$1');
+  }
+  t = t.replace(/\\left|\\right|\\displaystyle|\\limits/g, '').replace(/\\([A-Za-z]+|[,;!])/g, (_, n) => TEX_SYM[n] ?? n);
+  return t.replace(/[{}]/g, '').replace(/\*\*(.+?)\*\*/g, '$1').replace(/^#+\s*/, '').replace(/\s+/g, ' ').trim();
+}
+
+async function readPage(p, mode = 'read'){
+  const st = lib().settings, engine = st.engine || 'claude';
+  if (engine !== 'offline' && !st.apiKey) throw { code: 'no_key' };
+  const canvas = await assetCanvas(p.img);
+  const show = (label, live) => { p.status = label; p.live = live || ''; if (S.page?.id === p.id) render(); else scheduleRender(); };
+  try{
+    if (engine === 'offline' && mode !== 'fix'){
+      show('reading', 'オフラインで読み取り中…');
+      const off = await offlineRead(canvas, m => { p.live = m; const el = $('#live'); if (el && S.page?.id === p.id) el.textContent = m; });
+      p.rows = off.rows; p.md = rowsToMd(p.rows); p.by = 'offline';
+    } else {
+      const rows = textRows(canvas), n = rows.length;
+      const tier = engine === 'fast' ? 'quick' : (st.tier === 'complex' ? 'complex' : 'default');
+      const two = st.hiRes && canvas.height > canvas.width * 1.2 && n > 0;
+      if (!n){ // 文字の行が見つからない（図だけ・真っ白など）：ページ全体をそのまま読む
+        show('reading', 'Claudeが読み取っています…');
+        const blob = await annotated(canvas, [], [0, 1]);
+        const r = await claudeCall(promptRead(1), [blob], { tier, signal: OQ.ctl.signal, maxTokens: 6000 });
+        p.md = pickResult(r.text); p.rows = null; p.by = 'claude';
+      } else {
+        const imgs = two ? await Promise.all([annotated(canvas, rows, [0, 0.56]), annotated(canvas, rows, [0.44, 1])]) : [await annotated(canvas, rows)];
+        const fix = mode === 'fix' && p.rows?.length === n;
+        show(fix ? 'fixing' : 'reading', fix ? 'Claudeが画像と照合して見直しています…' : 'Claudeが読み取っています…');
+        const prompt = fix ? promptRowsFix(n, two, p.rows, p.issues) : promptRows(n, two);
+        const r = await claudeCall(prompt, imgs, { tier, signal: OQ.ctl.signal, maxTokens: Math.min(16000, 600 + n * 120),
+          onText: ({ text }) => { const el = $('#live'); if (el && S.page?.id === p.id) el.textContent = text.replace(/[{}"]/g, '').replace(/\\n/g, '\n').replace(/,\s*/g, '\n').slice(-1200); } });
+        const texts = parseRows(r.text, n);
+        p.rows = rows.map((box, i) => ({ box, text: texts[i] }));
+        p.md = rowsToMd(p.rows); p.by = engine === 'fast' ? 'claude-fast' : 'claude';
+      }
     }
   } finally { freeCanvas(canvas); }
-  const { tex, figs } = mdToTex(res.md, `p${String(p.n).padStart(2, '0')}`);
-  Object.assign(p, { md: res.md, tex, figs, issues: res.by === 'offline' ? [] : checkMd(res.md, res.truncated), status: 'done', edited: false, error: '', by: res.by });
+  const { tex, figs } = mdToTex(p.md, `p${String(p.n).padStart(2, '0')}`);
+  Object.assign(p, { tex, figs, issues: p.by === 'offline' ? [] : checkMd(p.md, false), status: 'done', edited: false, error: '' });
   delete p.live;
   await Store.savePage(p);
 }
-async function runPages(list, mode = 'read', meta = {}){
-  if (S.busy) return toast('いま別の読み取りをしています');
+async function runPages(list, mode = 'read'){
   if (!list.length) return toast('読むページがありません');
-  ctl = new AbortController(); let failure = null;
-  S.busy = { scan: meta.folder ? null : S.scan, folder: meta.folder || null, total: list.length, done: 0, label: '' };
-  render();
-  try{
-    for (const p of list){
-      const nm = meta.folder ? (scanOf(p.scan)?.name || '') + ' ' : '';
-      S.busy.label = `${nm}${p.n}枚目を読んでいます（${S.busy.done + 1}/${S.busy.total}）`; if (S.view === 'scan' || S.view === 'folder') render();
-      try{ await readPage(p, mode); }
-      catch(e){
-        if (e?.code === 'cancelled'){ p.status = p.tex ? 'done' : 'new'; delete p.live; break; }
-        console.error('read failed', e); Diag.log('read', e);
-        p.status = p.tex ? 'done' : 'error'; p.error = errText(e); delete p.live; await Store.savePage(p);
-        failure = failure || e;
-        if (['no_key', 'network', 'http_401', 'http_403', 'http_429'].includes(e?.code)) break;
-      }
-      S.busy.done++; render();
-    }
-  } finally {
-    S.busy = null; ctl = null; render();
-  }
-  const warn = list.filter(p => p.issues?.length).length;
-  if (failure) return ask('notice', { title: '文字化できませんでした', text: errText(failure) + (failure.code ? `（コード：${failure.code}）` : '') + '\n' + (HINT[failure.code] || '') });
-  if (list.every(p => p.status === 'done')) toast(warn ? `終わりました。要確認 ${warn}ページ` : '文字起こしが終わりました');
+  if (lib().settings.engine !== 'offline' && !lib().settings.apiKey)
+    return ask('notice', { title: 'APIキーが必要です', text: 'Claudeで読むには、「設定」でClaudeのAPIキーを入れてください。\n（APIキーなしで使うなら、設定で「オフライン」を選べます。精度は下がります）' });
+  S.busy = { scan: S.scan, total: list.length, done: 0, label: '' };
+  const t0 = Date.now(); let failure = null;
+  const upd = () => { if (S.busy){ S.busy.label = `${S.busy.done}/${S.busy.total}ページ完了（同時に3ページずつ読んでいます）`; scheduleRender(); } };
+  upd();
+  await Promise.all(list.map(p => oqAdd(p, mode).then(e => { if (S.busy) S.busy.done++; if (e && e.code !== 'cancelled' && !failure) failure = e; upd(); })));
+  S.busy = null; render();
+  if (failure) return ask('notice', { title: '文字化できなかったページがあります', text: errText(failure) + (failure.code ? `（コード：${failure.code}）` : '') + '\n' + (HINT[failure.code] || '') });
+  const warn = list.filter(p => p.issues?.length).length, sec = Math.round((Date.now() - t0) / 1000);
+  if (list.every(p => p.status === 'done')) toast(`${list.length}ページ終わりました（${sec}秒）` + (warn ? `・要確認 ${warn}` : ''));
 }
+
 /* ---------- 書き出し ---------- */
 async function save(filename, blob){
   const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
@@ -1775,7 +1996,7 @@ const exportList = () => S.sheet?.list || S.pages;
 async function exportPdf(list = exportList()){
   toast('PDFを作っています…');
   const pages = [];
-  for (const p of list) pages.push({ canvas: await assetCanvas(p.img), md: p.md || '' });
+  for (const p of list) pages.push({ canvas: await assetCanvas(p.img), md: p.md || '', rows: p.rows || null });
   // （buildPdf の中で1ページずつJPEGにしたあと手放す）
   await save(safeName(scanOf(S.scan)?.name) + '.pdf', await buildPdf(pages));
 }
@@ -1799,79 +2020,113 @@ async function copyText(t){
 
 /* ---------------------------------------------------------------------
    カメラ：撮影中に紙の四隅を追いかけ、止まったら自動で撮る（vFlat と同じ流れ）
+   四隅の検出は裏の作業スレッド（Worker）で1秒に10回ほど行い、画面は止めない
    --------------------------------------------------------------------- */
-const Cam = { armed: true, shotQuad: null, stream: null, video: null, timer: null, quad: null, conf: 0, stableSince: 0, lastShot: 0, shots: 0, queue: Promise.resolve(), busy: false, misses: 0 };
+const Cam = { stream: null, video: null, raf: 0, worker: null, pending: false, lastSent: 0, quad: null, shown: null, score: 0,
+  hist: [], armed: true, shotQuad: null, lastShot: 0, shots: 0, queue: Promise.resolve(), misses: 0, small: null };
+function camWorker(){
+  if (Cam.worker !== null) return Cam.worker;
+  try{
+    const w = new Worker('detect-worker.js');
+    w.onmessage = e => camResult(e.data);
+    w.onerror = () => { Cam.worker = false; Cam.pending = false; };
+    Cam.worker = w;
+  }catch{ Cam.worker = false; }
+  return Cam.worker;
+}
 async function openCamera(){
   if (!navigator.mediaDevices?.getUserMedia){ toast('このブラウザではカメラを直接使えません。写真で取り込みます'); return openPicker(true); }
   go('camera');
   try{
-    Cam.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } } });
+    Cam.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 4032 }, height: { ideal: 3024 }, aspectRatio: { ideal: 4 / 3 } } });
   }catch(e){
     Diag.log('camera', e); go('scan');
     return ask('notice', { title: 'カメラを使えませんでした', text: `理由：${e.name || e}\nSafariの「設定 → Safari → カメラ」を「許可」にしてから、もう一度試してください。\nかわりに「写真・PDF」から取り込むこともできます。` });
   }
   const v = $('#camVideo'); Cam.video = v; v.srcObject = Cam.stream;
   await v.play().catch(() => {});
-  Object.assign(Cam, { quad: null, conf: 0, stableSince: 0, shots: 0, misses: 0 });
-  Cam.timer = setInterval(camTick, 220);
+  Object.assign(Cam, { quad: null, shown: null, score: 0, hist: [], shots: 0, misses: 0, armed: true, pending: false });
+  camWorker();
+  cancelAnimationFrame(Cam.raf); Cam.raf = requestAnimationFrame(camLoop);
 }
 function closeCamera(){
-  clearInterval(Cam.timer); Cam.timer = null;
-  Cam.stream?.getTracks().forEach(t => t.stop()); Cam.stream = null;
+  cancelAnimationFrame(Cam.raf); Cam.raf = 0;
+  Cam.stream?.getTracks().forEach(t => t.stop()); Cam.stream = null; Cam.pending = false;
 }
-let camWork = null;
-function camTick(){
-  const v = Cam.video; if (!v || !v.videoWidth || Cam.busy) return;
-  Cam.busy = true;
-  try{
-    const r = 320 / Math.max(v.videoWidth, v.videoHeight);
-    if (!camWork) camWork = makeCanvas(1, 1);
-    camWork.width = Math.round(v.videoWidth * r); camWork.height = Math.round(v.videoHeight * r);
-    camWork.getContext('2d').drawImage(v, 0, 0, camWork.width, camWork.height);
-    const f = detectPage(camWork);
-    if (f && f.confidence >= 0.3){
-      const prev = Cam.quad;
-      const move = prev ? Math.max(...f.corners.map((c, i) => Math.hypot(c[0] - prev[i][0], c[1] - prev[i][1]))) : 1;
-      // 少しの揺れはならして、大きく動いたらすぐ追いかける
-      Cam.quad = prev && move < 0.08 ? prev.map((c, i) => [c[0] * 0.5 + f.corners[i][0] * 0.5, c[1] * 0.5 + f.corners[i][1] * 0.5]) : f.corners;
-      Cam.conf = f.confidence; Cam.misses = 0;
-      if (move > 0.015) Cam.stableSince = performance.now();
-    } else if (++Cam.misses > 3){ Cam.quad = null; Cam.conf = 0; Cam.stableSince = performance.now(); }
-    // 1枚撮ったら、紙を替える（いったん見えなくなる・大きく動く）まで次は自動で撮らない
-    if (!Cam.armed && (!Cam.quad || !Cam.shotQuad || Math.max(...Cam.quad.map((c, i) => Math.hypot(c[0] - Cam.shotQuad[i][0], c[1] - Cam.shotQuad[i][1]))) > 0.08)) Cam.armed = true;
-    drawCamOverlay();
-    // 自動撮影：紙がはっきり見えて、1秒ほど動かなかったら撮る
-    const now = performance.now();
-    if (lib().settings.auto && Cam.armed && Cam.quad && Cam.conf >= 0.45 && now - Cam.stableSince > 1000 && now - Cam.lastShot > 1500) shoot();
-  }catch(e){ Diag.log('camTick', e); }
-  finally { Cam.busy = false; }
+function camLoop(now){
+  if (!Cam.stream) return;
+  Cam.raf = requestAnimationFrame(camLoop);
+  const v = Cam.video;
+  if (v && v.videoWidth && !Cam.pending && now - Cam.lastSent > 80){
+    Cam.lastSent = now;
+    const r = 300 / Math.max(v.videoWidth, v.videoHeight);
+    if (!Cam.small) Cam.small = makeCanvas(1, 1);
+    const c = Cam.small; c.width = Math.round(v.videoWidth * r); c.height = Math.round(v.videoHeight * r);
+    const ctx = c.getContext('2d', { willReadFrequently: true }); ctx.drawImage(v, 0, 0, c.width, c.height);
+    const id = ctx.getImageData(0, 0, c.width, c.height);
+    const msg = { img: { data: id.data, width: id.width, height: id.height }, prev: Cam.quad };
+    Cam.pending = true;
+    const w = camWorker();
+    if (w) w.postMessage(msg, [id.data.buffer]);
+    else { let res = null; try{ res = DocDetect.detect(msg.img, msg.prev, { trackOk: 0.4, minScore: 0.15 }); }catch{} camResult(res); }
+  }
+  // 表示の枠はなめらかに追いかける
+  if (Cam.quad){
+    Cam.shown = Cam.shown ? Cam.shown.map((p, i) => [p[0] + (Cam.quad[i][0] - p[0]) * 0.45, p[1] + (Cam.quad[i][1] - p[1]) * 0.45]) : Cam.quad.map(p => p.slice());
+  } else Cam.shown = null;
+  drawCamOverlay();
+}
+function camResult(r){
+  Cam.pending = false;
+  const now = performance.now();
+  if (r && r.score >= 0.28){
+    Cam.quad = r.quad; Cam.score = r.score; Cam.misses = 0;
+    Cam.hist.push({ t: now, q: r.quad }); while (Cam.hist.length && now - Cam.hist[0].t > 700) Cam.hist.shift();
+  } else if (++Cam.misses > 2){ Cam.quad = null; Cam.score = 0; Cam.hist = []; }
+  // 撮ったあとは、紙が替わる（見えなくなる・大きく動く）まで次を撮らない
+  if (!Cam.armed && (!Cam.quad || !Cam.shotQuad || qdist(Cam.quad, Cam.shotQuad) > 0.08)) Cam.armed = true;
+  if (lib().settings.auto && Cam.armed && camSteady() && now - Cam.lastShot > 900) shoot();
+}
+const qdist = (a, b) => Math.max(...a.map((p, i) => Math.hypot(p[0] - b[i][0], p[1] - b[i][1])));
+// 0.45秒のあいだ、四隅がほとんど動いていない
+function camSteady(){
+  if (!Cam.quad || Cam.score < 0.38 || Cam.hist.length < 4) return false;
+  const now = performance.now(), recent = Cam.hist.filter(h => now - h.t < 450);
+  if (recent.length < 3 || now - Cam.hist[0].t < 420) return false;
+  return recent.every(h => qdist(h.q, Cam.quad) < 0.012);
 }
 function drawCamOverlay(){
-  const v = Cam.video, svg = $('#camSvg'), hint = $('#camHint'); if (!v || !svg) return;
+  const v = Cam.video, svg = $('#camSvg'), hint = $('#camHint'); if (!v || !svg || !v.videoWidth) return;
   const W = v.clientWidth, H = v.clientHeight, s = Math.min(W / v.videoWidth, H / v.videoHeight);
   const dw = v.videoWidth * s, dh = v.videoHeight * s, ox = (W - dw) / 2, oy = (H - dh) / 2;
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  if (!Cam.quad){ svg.innerHTML = ''; if (hint) hint.textContent = '紙全体が画面に入るように写してください'; return; }
-  const pts = Cam.quad.map(([x, y]) => `${ox + x * dw},${oy + y * dh}`).join(' ');
-  const ready = Cam.conf >= 0.45, steady = performance.now() - Cam.stableSince;
+  if (!Cam.shown){ if (svg.innerHTML) svg.innerHTML = ''; if (hint) hint.textContent = '紙全体が画面に入るように写してください'; return; }
+  const pts = Cam.shown.map(([x, y]) => `${(ox + x * dw).toFixed(1)},${(oy + y * dh).toFixed(1)}`).join(' ');
+  const ready = Cam.score >= 0.38, steady = camSteady();
   svg.innerHTML = `<polygon points="${pts}" class="${ready ? 'ok' : ''}"/>`;
-  if (hint) hint.textContent = !ready ? '紙の縁がはっきり見えるように少し離れてください' : !Cam.armed ? '撮りました。次の紙に替えてください' : lib().settings.auto ? (steady > 400 ? 'そのまま…' : '紙を見つけました。動かさずに') : '紙を見つけました。シャッターを押してください';
+  if (hint) hint.textContent = !ready ? '紙の縁がはっきり見えるようにしてください' : !Cam.armed ? '撮りました。次の紙に替えてください' : lib().settings.auto ? (steady ? '撮影します' : 'そのまま動かさずに…') : '紙を見つけました。シャッターを押してください';
 }
 function shoot(){
   const v = Cam.video; if (!v || !v.videoWidth) return;
   Cam.lastShot = performance.now(); Cam.armed = false; Cam.shotQuad = Cam.quad;
   const full = makeCanvas(v.videoWidth, v.videoHeight); full.getContext('2d').drawImage(v, 0, 0);
   const quad = Cam.quad;
-  $('#camFlash')?.classList.add('on'); setTimeout(() => $('#camFlash')?.classList.remove('on'), 160);
+  $('#camFlash')?.classList.add('on'); setTimeout(() => $('#camFlash')?.classList.remove('on'), 140);
   navigator.vibrate?.(15);
   Cam.shots++; const cnt = $('#camCount'); if (cnt) cnt.textContent = `${Cam.shots}枚`;
   const sc = scanOf(S.scan);
-  // 保存と補正は裏で順番に（撮影は止めない）
+  // 保存と補正は裏で順番に（撮影は止めない）。四隅は撮った写真の高い解像度で正確に合わせ直す
   Cam.queue = Cam.queue.then(async () => {
     let corners = quad;
     try{ if (corners) corners = refineQuad(full, corners); }catch{}
-    await addPhotoCanvas(sc, full, corners ? { corners, mids: null, profile: null, found: true } : null);
+    const p = await addPhotoCanvas(sc, full, corners ? { corners, mids: null, profile: null, found: true } : null);
+    autoRead(p);
   }).catch(e => { Diag.log('shoot', e); toast('保存できませんでした：' + (e.message || e)); });
+}
+// 撮った直後から裏で文字化しておく（設定で切り替え）
+function autoRead(p){
+  const st = lib().settings;
+  if (p && st.autoOcr && (st.engine === 'offline' || st.apiKey)) oqAdd(p);
 }
 
 /* ---------- フォルダの操作 ---------- */
@@ -1913,7 +2168,7 @@ document.addEventListener('click', async e => {
     case 'settings': return ask('settings', {});
     case 'savesettings': {
       const st = lib().settings; st.engine = document.querySelector('input[name=engine]:checked')?.value || 'auto';
-      st.tier = $('#tierHigh').checked ? 'complex' : 'default'; st.autofix = $('#autofix').checked; st.auto = $('#autoShot').checked;
+      st.autoOcr = $('#autoOcr').checked; st.hiRes = $('#hiRes').checked; st.auto = $('#autoShot').checked;
       const k = $('#apiKey').value.trim(); if (k) st.apiKey = k;
       await Store.saveLib(); closeSheet(); return toast('保存しました');
     }
@@ -1921,7 +2176,7 @@ document.addEventListener('click', async e => {
       S.sheet = null; let est = ''; try{ const e = await navigator.storage.estimate(); est = `${Math.round(e.usage / 1e6)}MB 使用 / 空き約${Math.round((e.quota - e.usage) / 1e6)}MB`; }catch{}
       const text = `保存：${Store.mode === 'local' ? 'このiPhoneに保存' : 'できない'}　${est}
 カメラ：${navigator.mediaDevices?.getUserMedia ? '使える' : '使えない'}　APIキー：${lib().settings.apiKey ? 'あり' : 'なし'}
-読み取り方法：${{ auto: 'おまかせ', offline: 'オフラインだけ', claude: '全部Claude' }[lib().settings.engine] || ''}
+読み取り方法：${{ claude: 'Claude・精度重視', fast: 'Claude・速さ重視', offline: 'オフライン' }[lib().settings.engine] || ''}
 
 最近のエラー：
 ${Diag.errors.length ? Diag.errors.join('\n') : 'なし'}
@@ -2041,7 +2296,7 @@ ${navigator.userAgent}`;
     case 'fixpage':
       if (S.page.edited){ const ok = await ask('confirm', { title: '見直させますか？', text: '手で編集した内容は上書きされます。', ok: '見直す' }); if (!ok) return; }
       return runPages([S.page], 'fix');
-    case 'stop': ctl?.abort(); return;
+    case 'stop': oqStop(); return;
     case 'edit': S.editing = !S.editing; if (!S.editing) await Store.savePage(S.page); return render();
     case 'copypage': return copyText(S.page.tex || '');
     case 'export': S.sheet = null; return ask('export', {});

@@ -1,6 +1,6 @@
 // オフラインでも開けるように、アプリ本体と部品（数式表示・PDF・オフライン読み取り）をiPhoneに保存しておく
-const APP = 'scan-app-v1';
-const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-180.png', './icon-192.png', './icon-512.png'];
+const APP = 'scan-app-v2';
+const SHELL = ['./', './index.html', './detector.js', './detect-worker.js', './manifest.webmanifest', './icon-180.png', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(APP).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== APP && k !== 'scan-cdn').map(k => caches.delete(k)))).then(() => self.clients.claim()));
